@@ -1,0 +1,25 @@
+{
+    "name": "test_dual_layers",
+    "layers": [
+        {
+            "order": 0,
+            "name": "layer1",
+            "tasks": [
+                {
+                    "name": "sleep",
+                    "cmd": ["sleep", "10"]
+                }
+            ]
+        },
+        {
+            "order": 10,
+            "name": "layer2",
+            "tasks": [
+                {
+                    "name": "sleep",
+                    "cmd": ["sleep", "10"]
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,20 @@
+{
+    "name": "test_empty_layer2",
+    "layers": [
+        {
+            "order": 0,
+            "name": "layer1",
+            "tasks": [
+                {
+                    "name": "sleep",
+                    "cmd": ["sleep", "60"]
+                }
+            ]
+        },
+        {
+            "order": 10,
+            "name": "layer2",
+            "tasks": [ ]
+        }
+    ]
+}

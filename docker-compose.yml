@@ -1,0 +1,134 @@
+version: '3'
+
+volumes:
+  queue:
+  database:
+
+networks: 
+  internal:
+    internal: true
+
+#
+#  +---------------------------------------------------------+
+#
+#                               Igor
+#
+#    Internal Network
+#
+#             +--------------+        +--------------+
+#             | Queue        |        | Database     |
+#             | - redis      |        |  - postgres  |
+#             |              |        |  - mongo     |
+#             |              |        |              |
+#             | holds tasks  |        | primary data |
+#             +------+---+---+        +-----+--+-----+
+#                    |   |                  |  |
+#                    |   |                  |  |
+#                    |   +--------------+   |  |
+#                    |                  |   |  |
+#                    |   +------------/ | \-+  |
+#                    |   |              |      |
+#             +------+---+---+        +-+------+-----+
+#             | Scheduler    |        | Daemon       |
+#             |              |        |              |
+#             |              |        |              |
+#             |              |        |  worker(s)   |
+#             | queues work  |        | (any number) |
+#             +------+-------+        +-------+------+
+#                    |                        |
+#                    +------------+-----------+
+#                                 |
+#                          +------+-------+
+#                          | Gateway      |
+#                          |              |
+# +----------------------- |              | ------------------+
+#                          |              |
+#  External Network        | api requests |
+#                          +--------------+
+#
+
+services:
+  # --- required data services ---
+  queue:
+    image: redis
+    ports:
+      - 6379:6379
+    volumes:
+      - queue:/data
+    networks:
+        - internal
+
+  database:
+    image: docker.io/postgres:9.5
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_DB=igor
+    volumes:
+      - database:/var/lib/postgresql/data
+    networks:
+        - internal
+
+#  database:  # alternative database
+#    image: mongo
+#    ports:
+#      - 27017:27017
+#    volumes:
+#      - database:/data/db
+#    networks:
+#        - internal
+
+  # --- igor internal services ---
+  scheduler:
+    build: docker/scheduler/
+    environment:
+      - IGOR_CONFIG=/opt/igor/etc/igor-docker.ini
+      - IGOR_DEFAULT_ADMIN_USERS=admin:admin
+    depends_on:
+      - database
+      - queue
+    links:
+      - database
+      - queue
+    volumes:
+      - ./:/opt/igor
+    networks:
+        - internal
+
+  daemon:
+    build: docker/daemon/
+    environment:
+      - IGOR_CONFIG=/opt/igor/etc/igor-docker.ini
+    depends_on:
+      - database
+      - queue
+    links:
+      - database
+      - queue
+    volumes:
+      - ./:/opt/igor
+    networks:
+        - internal
+
+  # --- igor API gateway ---
+  igor:
+    build: docker/gateway/
+    ports:
+      - 9025:9025
+    environment:
+      - IGOR_CONFIG=/opt/igor/etc/igor-docker.ini
+    depends_on:
+      - database
+      - queue
+      - daemon
+      - scheduler
+    links:
+      - database
+      - queue
+    volumes:
+      - ./:/opt/igor
+    ports:
+      - 9025:9025
+    networks:
+      - internal
+      - default
