@@ -2,7 +2,7 @@
 
 Doesn't support reading them yet.
 """
-from conversation.ui.main import start
+from igorUI.ui.main import start
 
 
 __all__ = [

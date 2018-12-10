@@ -14,31 +14,31 @@ from igorUI import client
 from igorUI.client import enums
 
 
-class JobPanel(ClosablePanel):
+class LayerPanel(ClosablePanel):
 
     def __init__(self, parent):
-        super(JobPanel, self).__init__(parent)
+        super(LayerPanel, self).__init__(parent)
 
-        self.setWidget(_JobWidget(self))
-        self.setWindowTitle("Jobs")
-        self.set_title("Jobs")
+        self.setWidget(_LayerWidget(self))
+        self.setWindowTitle("Layers")
+        self.set_title("Layers")
 
 
-class _JobWidget(PanelWidget):
+class _LayerWidget(PanelWidget):
     """
     The widget here is the parent widget which holds together both the model
     and the view for our table.
     """
     def __init__(self, parent=None):
-        super(_JobWidget, self).__init__(parent)
+        super(_LayerWidget, self).__init__(parent)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 4)
 
         self.__refreshEnabled = True
 
-        self._model = model = _JobModel(self)
-        self.__proxy = proxy = _JobFilterProxyModel(self)
+        self._model = model = _LayerModel(self)
+        self.__proxy = proxy = _LayerFilterProxyModel(self)
         proxy.setSortRole(model.DataRole)
         proxy.setSourceModel(model)
 
@@ -49,21 +49,28 @@ class _JobWidget(PanelWidget):
 
         headers = model.HEADERS
         view.setColumnWidth(headers.index('Name'), 250)
-        view.setColumnWidth(headers.index('JobId'), 250)
+        view.setColumnWidth(headers.index('LayerId'), 250)
         view.setColumnWidth(headers.index('State'), 100)
         view.setColumnWidth(headers.index('Paused'), 50)
         view.setColumnWidth(headers.index('UserId'), 200)
+        view.setColumnWidth(headers.index('Order'), 50)
+        view.setColumnWidth(headers.index('Priority'), 50)
         view.setContextMenuPolicy(Qt.CustomContextMenu)
 
         view.customContextMenuRequested.connect(self.__showContextMenu)
         view.clicked.connect(self.__itemClicked)
         view.doubleClicked.connect(self.__itemDoubleClicked)
 
+        # bind all the Events we might need to respond to
+        Events.JobSelected.connect(self.__set_job)
         Events.Refresh.connect(self.__refresh)
 
     def __refresh(self):
         """"""
         self._model.refresh()
+
+    def __set_job(self, id_: str):
+        self._model.set_current_job(id_)
 
     def __showContextMenu(self, pos):
         """"""
@@ -86,9 +93,9 @@ class _JobWidget(PanelWidget):
         """
         for o in self.get_selected():
             try:
-                client.Service.pause_job(o.id, o.etag)
+                client.Service.pause_layer(o.id, o.etag)
             except Exception as e:
-                Events.Status.emit(f"error pausing job {o.id}: {e}")
+                Events.Status.emit(f"error pausing layer {o.id}: {e}")
         self.__refresh()
 
     def __kill_selected(self):
@@ -97,9 +104,9 @@ class _JobWidget(PanelWidget):
         """
         for o in self.get_selected():
             try:
-                client.Service.kill_job(o.id, o.etag)
+                client.Service.kill_layer(o.id, o.etag)
             except Exception as e:
-                Events.Status.emit(f"error killing job {o.id}: {e}")
+                Events.Status.emit(f"error killing layer {o.id}: {e}")
         self.__refresh()
 
     def __itemClicked(self, index):
@@ -110,7 +117,7 @@ class _JobWidget(PanelWidget):
 
         """
         obj = index.data(self._model.ObjectRole)
-        Events.JobSelected.emit(obj.id)
+        Events.LayerSelected.emit(obj.id)
 
     def __itemDoubleClicked(self, index):
         """Default double left click handler
@@ -119,12 +126,12 @@ class _JobWidget(PanelWidget):
             index (QIndex):
         """
         obj = index.data(self._model.ObjectRole)
-        Events.OpenDetails.emit("job", obj.id)
+        Events.OpenDetails.emit("layer", obj.id)
 
 
-class _JobModel(AbstractEditableTableModel):
+class _LayerModel(AbstractEditableTableModel):
 
-    HEADERS = ["Name", "JobId", "State", "Paused", "UserId"]
+    HEADERS = ["Name", "LayerId", "State", "Paused", "UserId", "Order", "Priority"]
 
     DISPLAY_CALLBACKS = {
         0: lambda n: n.key,
@@ -132,10 +139,17 @@ class _JobModel(AbstractEditableTableModel):
         2: lambda n: n.state,
         3: lambda n: n.paused,
         4: lambda n: n.user_id,
+        5: lambda n: n.order,
+        6: lambda n: n.priority,
     }
 
     def __init__(self, parent=None):
-        super(_JobModel, self).__init__(parent)
+        super(_LayerModel, self).__init__(parent)
+        self._current_job = None
+
+    def set_current_job(self, id_: str):
+        self._current_job = id_
+        self.refresh()
 
     def display_for_index(self, index):
         """Return the text that should be displayed on the panel for the given
@@ -158,19 +172,25 @@ class _JobModel(AbstractEditableTableModel):
         the list of objects to display on demand.
 
         Returns:
-            []Job
+            []Layer
         """
+        if not self._current_job:
+            return []
+
         try:
-            for i in client.Service.get_jobs(states=enums.ALL_NOT_COMPLETE):
+            for i in client.Service.get_layers(
+                job_ids=[self._current_job],
+                states=enums.ALL,
+            ):
                 yield i
         except Exception as e:
-            Events.Status.emit(f"unable to fetch job information: {e}")
+            Events.Status.emit(f"unable to fetch layer information: {e}")
 
 
-class _JobFilterProxyModel(AlnumSortProxyModel):
+class _LayerFilterProxyModel(AlnumSortProxyModel):
 
     def __init__(self, *args, **kwargs):
-        super(_JobFilterProxyModel, self).__init__(*args, **kwargs)
+        super(_LayerFilterProxyModel, self).__init__(*args, **kwargs)
         self.__regex = None
         self.__all_filters = (None, )
         self.__customFilterEnabled = False
@@ -206,7 +226,7 @@ class _JobFilterProxyModel(AlnumSortProxyModel):
         """
         if not self.__customFilterEnabled:
             return super(
-                _JobFilterProxyModel, self).filterAcceptsRow(row, parent)
+                _LayerFilterProxyModel, self).filterAcceptsRow(row, parent)
 
         if not self.__regex:
             return True
@@ -216,7 +236,7 @@ class _JobFilterProxyModel(AlnumSortProxyModel):
         if not idx.isValid():
             return False
 
-        obj = model.data(idx, _JobModel.ObjectRole)
+        obj = model.data(idx, _LayerModel.ObjectRole)
         if not obj:
             return False
 

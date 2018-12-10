@@ -18,7 +18,7 @@ networks:
 #             +--------------+        +--------------+
 #             | Queue        |        | Database     |
 #             | - redis      |        |  - postgres  |
-#             |              |        |  - mongo     |
+#             |              |        |              |
 #             |              |        |              |
 #             | holds tasks  |        | primary data |
 #             +------+---+---+        +-----+--+-----+
@@ -68,15 +68,6 @@ services:
       - database:/var/lib/postgresql/data
     networks:
         - internal
-
-#  database:  # alternative database
-#    image: mongo
-#    ports:
-#      - 27017:27017
-#    volumes:
-#      - database:/data/db
-#    networks:
-#        - internal
 
   # --- igor internal services ---
   scheduler:

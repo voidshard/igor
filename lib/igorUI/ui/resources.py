@@ -1,7 +1,7 @@
 import os
 
 
-_root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _resource_dir = os.path.join(_root_dir, "resources")
 
 

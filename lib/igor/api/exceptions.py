@@ -21,3 +21,9 @@ class InvalidSpec(Exception):
     """Spec incorrect
     """
     pass
+
+
+class WriteConflict(Exception):
+    """You need to give the correct etag
+    """
+    pass

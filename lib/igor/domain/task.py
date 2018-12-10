@@ -19,6 +19,7 @@ class Task(Runnable):
         self.type = None
         self.cmd = []
         self.env = {}
+        self.result = None
         self.attempts = 0
         self.max_attempts = self._DEFAULT_RETRY_ATTEMPTS
 
@@ -89,6 +90,7 @@ class Task(Runnable):
             "worker_id": self.worker_id,
             "runner_id": self.runner_id,
             "metadata": self.metadata,
+            "result": self.result,
             "attempts": self.attempts,
             "max_attempts": self.max_attempts,
         }
@@ -117,6 +119,7 @@ class Task(Runnable):
         me.env = data.get("env", {})
         me.runner_id = data.get("runner_id")
         me.metadata = data.get("metadata", {})
+        me.result = data.get("result")
         me.attempts = data.get("attempts", 0)
         me.max_attempts = data.get("max_attempts", cls._DEFAULT_RETRY_ATTEMPTS)
 

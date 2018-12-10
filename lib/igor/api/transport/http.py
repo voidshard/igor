@@ -17,6 +17,18 @@ from igor.api import exceptions as api_exc
 
 logger = utils.logger()
 
+_action_pause = "pause"
+_action_retry = "retry"
+
+
+def request_tag():
+    """Fetch Etag header from request
+
+    :return: str
+
+    """
+    return request.headers.get("Etag", None, str)
+
 
 def requires_auth(f):
     """Sugar to enforce http basic auth
@@ -57,7 +69,7 @@ def error_wrap(f):
             return self._err(e), 401  # .. who are you again?
         except exc.NotFound as e:
             return self._err(e), 404  # nope can't find that
-        except (exc.WriteFailError, exc.WorkerMismatch) as e:
+        except (exc.WriteFailError, exc.WorkerMismatch, api_exc.WriteConflict) as e:
             return self._err(e), 409  # sorry someone beat you to it
         except Exception as e:
             return self._err(e), 500  # ???
@@ -198,11 +210,23 @@ class HttpTransport(Base):
 
         """
         if request.method == "DELETE":
-            self._gate.perform_kill(user, job_id=id_)
+            self._gate.perform_kill(user, request_tag(), job_id=id_)
             return "{}", 200
+
         elif request.method == "POST":
-            etag = self._gate.perform_pause(user, job_id=id_)
-            return self._id(id_, etag), 200
+            try:
+                data = json.loads(request.data or "{}")
+            except Exception as e:
+                return self._err(e), 400
+
+            action = data.get("action")
+
+            if action == _action_pause:
+                etag = self._gate.perform_pause(user, request_tag(), job_id=id_)
+                return self._id(id_, etag), 200
+            else:
+                return self._err(f"unknown action {action}"), 400
+
         return json.dumps(self._gate.one_job(user, id_).encode()), 200
 
     @error_wrap
@@ -214,12 +238,51 @@ class HttpTransport(Base):
 
         """
         if request.method == "DELETE":
-            self._gate.perform_kill(user, layer_id=id_)
+            self._gate.perform_kill(user, request_tag(), layer_id=id_)
             return "{}", 200
+
         elif request.method == "POST":
-            etag = self._gate.perform_pause(user, layer_id=id_)
-            return self._id(id_, etag), 200
+            try:
+                data = json.loads(request.data or "{}")
+            except Exception as e:
+                return self._err(e), 400
+
+            action = data.get("action")
+
+            if action == _action_pause:
+                etag = self._gate.perform_pause(user, request_tag(), layer_id=id_)
+                return self._id(id_, etag), 200
+            else:
+                return self._err(f"unknown action {action}"), 400
+
         return json.dumps(self._gate.one_layer(user, id_).encode()), 200
+
+    @error_wrap
+    @requires_auth
+    def handle_task_result(self, id_: str, user: domain.User=None):
+        """
+
+        :return:
+
+        """
+        etag = self._gate.set_task_result(user, request_tag(), id_, request.data)
+        return self._id(id_, etag), 200
+
+    @error_wrap
+    @requires_auth
+    def handle_task_env(self, id_: str, user: domain.User=None):
+        """
+
+        :return:
+
+        """
+        try:
+            data = json.loads(request.data or "{}")
+        except Exception as e:
+            return self._err(e), 400
+
+        etag = self._gate.set_task_env(user, request_tag(), id_, data)
+        return self._id(id_, etag), 200
 
     @error_wrap
     @requires_auth
@@ -230,11 +293,26 @@ class HttpTransport(Base):
 
         """
         if request.method == "DELETE":
-            self._gate.perform_kill(user, task_id=id_)
+            self._gate.perform_kill(user, request_tag(), task_id=id_)
             return "{}", 200
+
         elif request.method == "POST":
-            etag = self._gate.perform_pause(user, task_id=id_)
-            return self._id(id_, etag), 200
+            try:
+                data = request.json or {}
+            except Exception as e:
+                return self._err(e), 400
+
+            action = data.get("action")
+
+            if action == _action_pause:
+                etag = self._gate.perform_pause(user, request_tag(), task_id=id_)
+                return self._id(id_, etag), 200
+            elif action == _action_retry:
+                etag = self._gate.retry_task(user, request_tag(), id_)
+                return self._id(id_, etag), 200
+            else:
+                return self._err(f"unknown action {action}"), 400
+
         return json.dumps(self._gate.one_task(user, id_).encode()), 200
 
     @error_wrap
@@ -315,6 +393,18 @@ class HttpTransport(Base):
             "handle_task",
             self.handle_task,
             methods=["GET", "DELETE", "POST"]
+        )
+        self._app.add_url_rule(  # set result of task
+            f"{self._V}/tasks/<id_>/result",
+            "handle_task_result",
+            self.handle_task_result,
+            methods=["POST"]
+        )
+        self._app.add_url_rule(  # set environment of task
+            f"{self._V}/tasks/<id_>/environment",
+            "handle_task_env",
+            self.handle_task_env,
+            methods=["POST"]
         )
         self._app.add_url_rule(
             f"{self._V}/workers/<id_>", "handle_worker", self.handle_worker, methods=["GET"]

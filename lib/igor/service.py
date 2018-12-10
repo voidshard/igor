@@ -10,46 +10,6 @@ from igor import exceptions as exc
 logger = utils.logger()
 
 
-def _retry(
-    update_fn, get_one_fn, id_, tag, kwargs=None, retries=0, catch=(exc.WriteFailError,)
-):
-    """Retries a DB function, catching errors raised if a Write Fails.
-
-    This write deliberately clobbers, essentially ignoring the etag. Hence this is intended
-    only for internal callers that know what they're doing .. external clients should actually
-    respect & check why we failed to write - refetching the latest obj and resetting the tag.
-    Internally however, what we say goes!
-
-    :param update_fn: func that takes args (id, etag) and some kwargs to update
-    :param get_one_fn: func that takes an ID and returns the corresponding obj (or None)
-    :param id_: id of obj we want to update
-    :param tag: current etag
-    :param kwargs: kwargs corresponding to fields on the obj we wish to update
-    :param retries: number of times to retry the operation
-    :param catch: error(s) to catch (by default, we only catch WriteFail)
-
-    """
-    kwargs = kwargs or {}
-
-    err = None
-    for i in range(0, max(1, retries)):
-        try:
-            return update_fn(id_, tag, **kwargs)
-        except catch as e:
-            logger.warn(
-                f"retrying db write: error:{e} id:{id_} etag:{tag}"
-            )
-            err = e
-
-            obj = get_one_fn(id_)
-            if not obj:
-                raise e
-
-            tag = obj.etag
-            continue
-    raise err
-
-
 class IgorDBService:
     """Used within Igor to add some db sugar.
 
@@ -63,12 +23,6 @@ class IgorDBService:
         """Open connection to DB.
 
         """
-        driver = self._config.get("database", {}).get("driver", "postgres")
-        if driver == "mongo":
-            return database.MongoDB(
-                host=self._config.get("database", {}).get("host", "localhost"),
-                port=int(self._config.get("database", {}).get("port", 27017)),
-            )
         return database.PostgresDB(
             host=self._config.get("database", {}).get("host", "localhost"),
             port=int(self._config.get("database", {}).get("port", 5432)),
@@ -131,7 +85,7 @@ class IgorDBService:
         meta = wkr.metadata
         meta['stats'] = stats
 
-        self.update_worker(worker_id, wkr.etag, last_ping=time.time(), metadata=meta, retries=3)
+        self.update_worker(worker_id, None, last_ping=time.time(), metadata=meta)
 
     def start_work_task(self, wkr_id: str, tsk_id: str):
         """Worker tells system it's starting a task
@@ -170,7 +124,6 @@ class IgorDBService:
         self.update_task(
             tsk.id,
             tsk.etag,
-            retries=3,
             **tsk_update
         )
 
@@ -178,7 +131,6 @@ class IgorDBService:
         self.update_worker(
             wkr.id,
             wkr.etag,
-            retries=3,
             **wkr_update
         )
 
@@ -225,7 +177,6 @@ class IgorDBService:
         self.update_task(
             tsk.id,
             tsk.etag,
-            retries=3,
             **tsk_update
         )
 
@@ -233,7 +184,6 @@ class IgorDBService:
         self.update_worker(
             wkr.id,
             wkr.etag,
-            retries=3,
             **wkr_update
         )
 
@@ -243,7 +193,6 @@ class IgorDBService:
         etag: str,
         metadata=None,
         state=None,
-        retries=0,
         **kwargs
     ):
         """Update given job with various settings.
@@ -266,13 +215,10 @@ class IgorDBService:
             if arg in kwargs:
                 update_kwargs[arg] = kwargs.get(arg)
 
-        return _retry(
-            self._db.update_job,
-            self.one_job,
+        return self._db.update_job(
             job_id,
             etag,
-            kwargs=update_kwargs,
-            retries=retries,
+            **update_kwargs,
         )
 
     def update_layer(
@@ -282,7 +228,6 @@ class IgorDBService:
         priority=None,
         state=None,
         metadata=None,
-        retries=0,
         **kwargs
     ):
         """Update given layer with various settings.
@@ -294,7 +239,6 @@ class IgorDBService:
         :param runner_id:
         :param metadata:
         :param paused:
-        :param retries:
 
         """
         update_kwargs = {
@@ -307,13 +251,10 @@ class IgorDBService:
             if arg in kwargs:
                 update_kwargs[arg] = kwargs.get(arg)
 
-        return _retry(
-            self._db.update_layer,
-            self.one_layer,
+        return self._db.update_layer(
             layer_id,
             etag,
-            kwargs=update_kwargs,
-            retries=retries,
+            **update_kwargs,
         )
 
     def update_task(
@@ -321,9 +262,9 @@ class IgorDBService:
         task_id: str,
         etag: str,
         metadata=None,
+        result=None,
         state=None,
         attempts=None,
-        retries=0,
         **kwargs
     ):
         """Update given task with various settings.
@@ -333,15 +274,16 @@ class IgorDBService:
         :param worker_id:
         :param runner_id:
         :param metadata:
+        :param result:
         :param state:
         :param attempts:
         :param paused:
-        :param retries:
 
         """
         update_kwargs = {
             "state": state,
             "metadata": metadata,
+            "result": result,
             "attempts": attempts,
         }
 
@@ -349,13 +291,10 @@ class IgorDBService:
             if arg in kwargs:
                 update_kwargs[arg] = kwargs.get(arg)
 
-        return _retry(
-            self._db.update_task,
-            self.one_task,
+        return self._db.update_task(
             task_id,
             etag,
-            kwargs=update_kwargs,
-            retries=retries,
+            **update_kwargs,
         )
 
     def update_worker(
@@ -366,7 +305,6 @@ class IgorDBService:
         task_finished=None,
         last_ping=None,
         metadata=None,
-        retries=0,
         **kwargs
     ):
         """Update given worker with various settings
@@ -380,7 +318,6 @@ class IgorDBService:
         :param task_finished:
         :param last_ping:
         :param metadata:
-        :param retries:
 
         """
         update_kwargs = {
@@ -394,13 +331,10 @@ class IgorDBService:
             if arg in kwargs:
                 update_kwargs[arg] = kwargs.get(arg)
 
-        return _retry(
-            self._db.update_worker,
-            self.one_worker,
+        return self._db.update_worker(
             worker_id,
             etag,
-            kwargs=update_kwargs,
-            retries=retries,
+            **update_kwargs,
         )
 
     def get_workers(self, query: domain.Query):

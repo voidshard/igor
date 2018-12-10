@@ -1,8 +1,12 @@
 
+import time
 import inspect
+import threading
+
+from igorUI.ui.manifest import Signal, QObject
 
 
-from conversation.ui.manifest import Signal, QObject
+_REFRESH_INTERVAL = 5
 
 
 class _EventManager(QObject):
@@ -10,20 +14,20 @@ class _EventManager(QObject):
     panels.
     """
 
-    # force refresh of widgets
-    Refresh = Signal()
-
-    # flush is a signal emitted when the user wishes to save or exit
-    Flush = Signal()
-
-    # a node on the graph is selected
-    NodeSelected = Signal(object)
-
-    # save shortcut
-    Save = Signal()
-
     # set main window status
     Status = Signal(str)
+
+    # tells listening things to refresh their data
+    Refresh = Signal()
+
+    # selected job
+    JobSelected = Signal(str)
+
+    # selected layer
+    LayerSelected = Signal(str)
+
+    # selected class & id
+    OpenDetails = Signal(str, str)
 
 
 Events = _EventManager()
@@ -62,3 +66,15 @@ def __init():
 
 
 __init()
+
+
+def _fire_refresh():
+    while True:
+        Events.Refresh.emit()
+        time.sleep(_REFRESH_INTERVAL)
+
+
+_thread = threading.Thread(target=_fire_refresh)
+_thread.setDaemon(True)
+_thread.setName("tick-tock")
+_thread.start()

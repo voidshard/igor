@@ -23,8 +23,8 @@ class _Logger:
 
     """
 
-    def __init__(self, logger, task_id, worker_id, **kwargs):
-        self._logger = logger
+    def __init__(self, lgr, task_id, worker_id, **kwargs):
+        self._logger = lgr
         self._task_id = task_id
         self._worker_id = worker_id
         self._kwargs = kwargs or {}
@@ -45,12 +45,7 @@ class DefaultRunner(Base):
 
     _DEFAULT_ENV_VARS = ["PYTHONPATH", "PATH", "GOPATH"]
 
-    _LAUNCH_STATES = [enums.State.PENDING.value]
     _QUEUE_MAIN = "main"
-    _RETRIES = 3
-    _SLEEP_BETWEEN_QUEUE_POLLS = 5
-
-    _DEFAULT_TASK_RETRIES = 3
 
     _CHAN_WORKERS = "workers"  # channel all workers subscribe to
 
@@ -122,10 +117,9 @@ class DefaultRunner(Base):
         """
         self._svc.update_task(
             task.id,
-            task.etag,
+            None,
             state=enums.State.QUEUED.value,
             runner_id=task.id,
-            retries=self._RETRIES,
         )
         self._queue.add(
             self._QUEUE_MAIN,
@@ -165,48 +159,6 @@ class DefaultRunner(Base):
 
         return count
 
-    def _build_logger(self, task_id, logger_kwargs: dict):
-        """Build the actual logger we'll use.
-
-        :param task_id:
-        :param logger_kwargs:
-        :return: _Logger
-
-        """
-        if not logger_kwargs:
-            logger_kwargs = {}
-        elif not isinstance(logger_kwargs, dict):
-            logger_kwargs = {}
-
-        type_ = logger_kwargs.get("type", enums.LoggerType.STDOUT.value)
-        if type_ == enums.LoggerType.UDP.value:
-            return _Logger(
-                loggers.UDPLogger(logger_kwargs.get("host"), logger_kwargs.get("port")),
-                task_id,
-                self._worker.id
-            )
-
-        return _Logger(loggers.StdoutLogger(), task_id, self._worker.id)
-
-    def _determine_logger(self, task: domain.Task):
-        """Return our logger wrapper using the task -> layer -> job logger metadata (if any).
-
-        We'll use the first that we find.
-
-        :param task:
-        :return: _Logger
-
-        """
-        if task.metadata.get("logger"):
-            return self._build_logger(task.id, task.metadata.get("logger"))
-
-        layer = self._svc.one_layer(task.layer_id)
-        if layer.metadata.get("logger"):
-            return self._build_logger(task.id, layer.metadata.get("logger"))
-
-        job = self._svc.one_job(task.job_id)
-        return self._build_logger(task.id, job.metadata.get("logger"))
-
     def _do_task(self, job_id, layer_id, task_id) -> bool:
         """Do the grunt work of actually running the given task.
 
@@ -230,11 +182,8 @@ class DefaultRunner(Base):
             logger.warn(f"dropping task:{task_id} state:{tsk.state}")
             return True
 
-        try:
-            task_logger = self._determine_logger(tsk)
-        except (exc.JobNotFound, exc.LayerNotFound) as e:
-            logger.warn(f"dropping task:{task_id} error:{e}")
-            return True
+        # TODO add support for other loggers
+        task_logger = _Logger(loggers.StdoutLogger(), task_id, self._worker.id)
 
         env = copy.copy(self._default_env)
 
@@ -290,12 +239,11 @@ class DefaultRunner(Base):
 
                 self._svc.update_worker(
                     self._worker.id,
-                    wkr.etag,
+                    None,
                     task_finished=time.time(),
                     job_id=None,
                     layer_id=None,
                     task_id=None,
-                    retries=self._RETRIES,
                 )
                 return True
 

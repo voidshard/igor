@@ -9,36 +9,36 @@ from igorUI.ui.widgets.widget import (
 )
 from igorUI.ui.manifest import QVBoxLayout, Qt, QMenu, QIcon
 from igorUI.ui import resources
-from igorUI.ui.events import Events
 from igorUI import client
 from igorUI.client import enums
+from igorUI.ui.events import Events
 
 
-class JobPanel(ClosablePanel):
+class TaskPanel(ClosablePanel):
 
     def __init__(self, parent):
-        super(JobPanel, self).__init__(parent)
+        super(TaskPanel, self).__init__(parent)
 
-        self.setWidget(_JobWidget(self))
-        self.setWindowTitle("Jobs")
-        self.set_title("Jobs")
+        self.setWidget(_TaskWidget(self))
+        self.setWindowTitle("Tasks")
+        self.set_title("Tasks")
 
 
-class _JobWidget(PanelWidget):
+class _TaskWidget(PanelWidget):
     """
     The widget here is the parent widget which holds together both the model
     and the view for our table.
     """
     def __init__(self, parent=None):
-        super(_JobWidget, self).__init__(parent)
+        super(_TaskWidget, self).__init__(parent)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 4)
 
         self.__refreshEnabled = True
 
-        self._model = model = _JobModel(self)
-        self.__proxy = proxy = _JobFilterProxyModel(self)
+        self._model = model = _TaskModel(self)
+        self.__proxy = proxy = _TaskFilterProxyModel(self)
         proxy.setSortRole(model.DataRole)
         proxy.setSourceModel(model)
 
@@ -49,21 +49,46 @@ class _JobWidget(PanelWidget):
 
         headers = model.HEADERS
         view.setColumnWidth(headers.index('Name'), 250)
-        view.setColumnWidth(headers.index('JobId'), 250)
+        view.setColumnWidth(headers.index('TaskId'), 250)
         view.setColumnWidth(headers.index('State'), 100)
         view.setColumnWidth(headers.index('Paused'), 50)
         view.setColumnWidth(headers.index('UserId'), 200)
+        view.setColumnWidth(headers.index('Cmd'), 400)
+        view.setColumnWidth(headers.index('Attempts'), 50)
         view.setContextMenuPolicy(Qt.CustomContextMenu)
 
         view.customContextMenuRequested.connect(self.__showContextMenu)
         view.clicked.connect(self.__itemClicked)
         view.doubleClicked.connect(self.__itemDoubleClicked)
 
+        # bind all the Events we might need to respond to
+        Events.LayerSelected.connect(self.__set_layer)
         Events.Refresh.connect(self.__refresh)
 
     def __refresh(self):
         """"""
         self._model.refresh()
+
+    def __set_layer(self, id_: str):
+        self._model.set_current_layer(id_)
+
+    def __itemClicked(self, index):
+        """Default left-click handler
+
+        Args:
+            index (QIndex):
+
+        """
+        pass
+
+    def __itemDoubleClicked(self, index):
+        """Default double left click handler
+
+        Args:
+            index (QIndex):
+        """
+        obj = index.data(self._model.ObjectRole)
+        Events.OpenDetails.emit("task", obj.id)
 
     def __showContextMenu(self, pos):
         """"""
@@ -72,6 +97,11 @@ class _JobWidget(PanelWidget):
             QIcon(resources.get("pause.png")),
             "Pause / Resume",
             self.__pause_selected
+        )
+        menu.addAction(
+            QIcon(resources.get("retry.png")),
+            "Retry",
+            self.__retry_selected
         )
         menu.addAction(
             QIcon(resources.get("kill.png")),
@@ -86,9 +116,20 @@ class _JobWidget(PanelWidget):
         """
         for o in self.get_selected():
             try:
-                client.Service.pause_job(o.id, o.etag)
+                client.Service.pause_task(o.id, o.etag)
             except Exception as e:
-                Events.Status.emit(f"error pausing job {o.id}: {e}")
+                Events.Status.emit(f"error pausing task {o.id}: {e}")
+        self.__refresh()
+
+    def __retry_selected(self):
+        """
+
+        """
+        for o in self.get_selected():
+            try:
+                client.Service.retry_task(o.id, o.etag)
+            except Exception as e:
+                Events.Status.emit(f"error retrying task {o.id}: {e}")
         self.__refresh()
 
     def __kill_selected(self):
@@ -97,34 +138,15 @@ class _JobWidget(PanelWidget):
         """
         for o in self.get_selected():
             try:
-                client.Service.kill_job(o.id, o.etag)
+                client.Service.kill_task(o.id, o.etag)
             except Exception as e:
-                Events.Status.emit(f"error killing job {o.id}: {e}")
+                Events.Status.emit(f"error killing task {o.id}: {e}")
         self.__refresh()
 
-    def __itemClicked(self, index):
-        """Default left-click handler
 
-        Args:
-            index (QIndex):
+class _TaskModel(AbstractEditableTableModel):
 
-        """
-        obj = index.data(self._model.ObjectRole)
-        Events.JobSelected.emit(obj.id)
-
-    def __itemDoubleClicked(self, index):
-        """Default double left click handler
-
-        Args:
-            index (QIndex):
-        """
-        obj = index.data(self._model.ObjectRole)
-        Events.OpenDetails.emit("job", obj.id)
-
-
-class _JobModel(AbstractEditableTableModel):
-
-    HEADERS = ["Name", "JobId", "State", "Paused", "UserId"]
+    HEADERS = ["Name", "TaskId", "State", "Paused", "UserId", "Cmd", "Attempts"]
 
     DISPLAY_CALLBACKS = {
         0: lambda n: n.key,
@@ -132,10 +154,17 @@ class _JobModel(AbstractEditableTableModel):
         2: lambda n: n.state,
         3: lambda n: n.paused,
         4: lambda n: n.user_id,
+        5: lambda n: n.cmd_string,
+        6: lambda n: n.attempts,
     }
 
     def __init__(self, parent=None):
-        super(_JobModel, self).__init__(parent)
+        super(_TaskModel, self).__init__(parent)
+        self._current_layer = None
+
+    def set_current_layer(self, id_: str):
+        self._current_layer = id_
+        self.refresh()
 
     def display_for_index(self, index):
         """Return the text that should be displayed on the panel for the given
@@ -158,19 +187,25 @@ class _JobModel(AbstractEditableTableModel):
         the list of objects to display on demand.
 
         Returns:
-            []Job
+            []Task
         """
+        if not self._current_layer:
+            return []
+
         try:
-            for i in client.Service.get_jobs(states=enums.ALL_NOT_COMPLETE):
+            for i in client.Service.get_tasks(
+                layer_ids=[self._current_layer],
+                states=enums.ALL,
+            ):
                 yield i
         except Exception as e:
-            Events.Status.emit(f"unable to fetch job information: {e}")
+            Events.Status.emit(f"unable to fetch task information: {e}")
 
 
-class _JobFilterProxyModel(AlnumSortProxyModel):
+class _TaskFilterProxyModel(AlnumSortProxyModel):
 
     def __init__(self, *args, **kwargs):
-        super(_JobFilterProxyModel, self).__init__(*args, **kwargs)
+        super(_TaskFilterProxyModel, self).__init__(*args, **kwargs)
         self.__regex = None
         self.__all_filters = (None, )
         self.__customFilterEnabled = False
@@ -206,7 +241,7 @@ class _JobFilterProxyModel(AlnumSortProxyModel):
         """
         if not self.__customFilterEnabled:
             return super(
-                _JobFilterProxyModel, self).filterAcceptsRow(row, parent)
+                _TaskFilterProxyModel, self).filterAcceptsRow(row, parent)
 
         if not self.__regex:
             return True
@@ -216,7 +251,7 @@ class _JobFilterProxyModel(AlnumSortProxyModel):
         if not idx.isValid():
             return False
 
-        obj = model.data(idx, _JobModel.ObjectRole)
+        obj = model.data(idx, _TaskModel.ObjectRole)
         if not obj:
             return False
 

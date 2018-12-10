@@ -242,23 +242,23 @@ class JobSpec(_Decode):
         if ltype == enums.LoggerType.STDOUT.value:
             return {"type": enums.LoggerType.STDOUT.value}
 
-        elif ltype == enums.LoggerType.UDP.value:
-            host = ldata.get("host")
-            if not host:
-                raise exc.InvalidSpec(f"expected logger config to contain 'host' property")
-
-            port = cls.to_int(ldata.get("port", -1))
-            if not port:
-                raise exc.InvalidSpec(f"expected logger config to contain 'port' property")
-
-            if not (0 < port < 65536):
-                raise exc.InvalidSpec(f"logger config port number out of bounds: {port}")
-
-            return {
-                "type": enums.LoggerType.UDP.value,
-                "host": str(host),
-                "port": cls.to_int(port),
-            }
+        # elif ltype == enums.LoggerType.UDP.value:
+        #     host = ldata.get("host")
+        #     if not host:
+        #         raise exc.InvalidSpec(f"expected logger config to contain 'host' property")
+        #
+        #     port = cls.to_int(ldata.get("port", -1))
+        #     if not port:
+        #         raise exc.InvalidSpec(f"expected logger config to contain 'port' property")
+        #
+        #     if not (0 < port < 65536):
+        #         raise exc.InvalidSpec(f"logger config port number out of bounds: {port}")
+        #
+        #     return {
+        #         "type": enums.LoggerType.UDP.value,
+        #         "host": str(host),
+        #         "port": cls.to_int(port),
+        #     }
 
         raise exc.InvalidSpec(f"unknown logger 'type' got: {ltype}")
 

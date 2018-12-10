@@ -118,6 +118,7 @@ CREATE TABLE tasks(
 	str_key TEXT,
 	json_cmd JSONB NOT NULL,
 	json_env JSONB NOT NULL DEFAULT '{}',
+	bytea_result BYTEA,
 	int_attempts INT NOT NULL DEFAULT 0,
 	int_max_attempts INT NOT NULL DEFAULT 3) WITH (OIDS = false);
 

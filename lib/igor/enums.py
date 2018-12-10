@@ -5,10 +5,7 @@ class LoggerType(enum.Enum):
     """What to do with stdout / stderr from running processes.
 
     """
-    # the default is simply to stream log lines to some TCP socket over SSL to some address
-    UDP = "UDP"
-
-    # if all else fails, print to stdout *shrug*
+    # print to stdout
     STDOUT = "STDOUT"
 
 

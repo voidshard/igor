@@ -3,11 +3,9 @@ for persistent storage.
 
 """
 
-from igor.database.mongo_impl import MongoDB
 from igor.database.postgres_impl import PostgresDB
 
 
 __all__ = [
-    "MongoDB",
     "PostgresDB",
 ]

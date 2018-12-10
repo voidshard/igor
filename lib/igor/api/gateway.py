@@ -23,6 +23,14 @@ class IgorGateway:
 
     """
 
+    _default_states = [
+        enums.State.PENDING,
+        enums.State.QUEUED,
+        enums.State.RUNNING,
+        enums.State.ERRORED,
+        enums.State.SKIPPED,
+    ]
+
     def __init__(self, service, runner):
         self._svc = service
         self._rnr = runner
@@ -58,19 +66,107 @@ class IgorGateway:
         logger.info(f"auth success for user: user_id:{user_name}")
         return obj
 
-    def perform_pause(self, req: domain.User, job_id=None, layer_id=None, task_id=None):
+    def set_task_result(self, req: domain.User, etag, task_id, result):
+        """
+
+        :param req:
+        :param etag:
+        :param task_id:
+        :param result:
+        :return: str
+
+        """
+        etag, _ = self._apply_task_update(req, etag, task_id, result=result)
+        return etag
+
+    def set_task_env(self, req: domain.User, etag, task_id, env):
+        """
+
+        :param req:
+        :param etag:
+        :param task_id:
+        :param env:
+        :return: str
+
+        """
+        if not isinstance(env, dict):
+            raise exc.InvalidSpec(f"task env must be dict type, got {env}")
+
+        etag, _ = self._apply_task_update(req, etag, task_id, env={str(k): str(v) for k, v in env})
+        return etag
+
+    def _apply_task_update(self, req: domain.User, etag, task_id, **update):
+        """Apply some update to a task & return the new etag & task obj
+
+        :param req:
+        :param etag:
+        :param task_id:
+        :param update:
+        :return: str, domain.Task
+
+        """
+        if not task_id:
+            return
+
+        if not etag:
+            raise exc.WriteConflict(f"no etag given")
+
+        obj = self._svc.one_task(task_id)
+        if obj.user_id != req.id and not req.is_admin:
+            raise exc.Forbidden(f"user {req.id} may not update object {task_id}")
+
+        return self._svc.update_task(obj.id, etag, **update), obj
+
+    def retry_task(self, req: domain.User, etag, task_id):
+        """Retry a single task & return it's update etag.
+
+        - sets task to pending, allowing it to be queued
+        - sets parent layer to queued so the task can be kicked off again
+
+        :param req:
+        :param etag:
+        :param task_id:
+        :return: str
+
+        """
+        new_tag, task = self._apply_task_update(
+            req,
+            etag,
+            task_id,
+            state=enums.State.PENDING.value,
+        )
+        self._rnr.send_kill(
+            task_id=task_id
+        )
+
+        parent = self._svc.one_layer(task.layer_id)
+        if parent.state not in [enums.State.QUEUED.value, enums.State.RUNNING.value]:
+            self._svc.update_layer(
+                parent.id,
+                parent.etag,
+                state=enums.State.QUEUED.value,
+            )
+
+        return new_tag
+
+    def perform_pause(self, req: domain.User, etag, job_id=None, layer_id=None, task_id=None):
         """A kill order makes currently running matching tasks die, and
         allows them to retry normally.
 
         One of job_id, layer_id, task_id must be given for this to do anything.
 
         :param req: requesting user
+        :param etag: tag of the object one wishes to update
         :param job_id:
         :param layer_id:
         :param task_id:
         :raises Forbidden:
+        :raises WriteConflict:
 
         """
+        if not etag:
+            raise exc.WriteConflict(f"no etag given")
+
         obj_id = job_id or layer_id or task_id
         if not obj_id:
             return
@@ -90,24 +186,29 @@ class IgorGateway:
             raise exc.Forbidden(f"user {req.id} may not update object {obj_id}")
 
         logger.info(f"performing pause toggle: requester:{req.id} object:{obj_id}")
-        if obj.paused:
-            return update_one(obj.id, obj.etag, paused=None)
-        else:
-            return update_one(obj.id, obj.etag, paused=time.time())
 
-    def perform_kill(self, req: domain.User, job_id=None, layer_id=None, task_id=None):
+        if obj.paused:
+            return update_one(obj.id, etag, paused=None)
+        else:
+            return update_one(obj.id, etag, paused=time.time())
+
+    def perform_kill(self, req: domain.User, etag, job_id=None, layer_id=None, task_id=None):
         """A kill order makes currently running matching tasks die, and
         allows them to retry normally.
 
         One of job_id, layer_id, task_id must be given for this to do anything.
 
         :param req: requesting user
+        :param etag:
         :param job_id:
         :param layer_id:
         :param task_id:
         :raises Forbidden:
 
         """
+        if not etag:
+            raise exc.WriteConflict(f"no etag given")
+
         if not any([job_id, layer_id, task_id]):
             return
 
@@ -133,7 +234,7 @@ class IgorGateway:
 
             self._svc.update_task(
                 t.id,
-                t.etag,
+                etag,
                 state=enums.State.ERRORED.value,
                 worker_id=None,
                 meta=meta,
@@ -143,8 +244,8 @@ class IgorGateway:
                 task_id=t.id
             )
 
-    @staticmethod
-    def _build_query(qspec: spec.QuerySpec) -> domain.Query:
+    @classmethod
+    def _build_query(cls, qspec: spec.QuerySpec) -> domain.Query:
         """Build a domain.Query from a QuerySpec object.
 
         :param qspec:
@@ -166,6 +267,9 @@ class IgorGateway:
             f.layer_ids = fspec.layer_ids
             f.task_ids = fspec.task_ids
             f.states = fspec.states
+
+            if not f.states:
+                f.states = cls._default_states
 
             q.filters.append(f)
 

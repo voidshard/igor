@@ -1,8 +1,20 @@
 """The manifest module imports all of the PyQt bits we need.
 """
 
-from PyQt5.Qt import Qt
-from PyQt5.QtCore import QObject, QSize, QPoint, QRect
+from PyQt5.Qt import (
+    Qt,
+    QRegExp,
+    QSortFilterProxyModel,
+    QAbstractTableModel,
+    QMenu,
+    QModelIndex,
+)
+from PyQt5.QtCore import (
+    QObject,
+    QSize,
+    QPoint,
+    QRect,
+)
 from PyQt5.QtCore import pyqtSignal as Signal
 from PyQt5.QtWidgets import (
     QWidget,
@@ -21,6 +33,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QGridLayout,
+    QTableView,
     QCheckBox,
 )
 from PyQt5.QtGui import (
@@ -33,8 +46,14 @@ from PyQt5.QtGui import (
 
 
 __all__ = [
+    "QMenu",
+    "QModelIndex",
+    "QAbstractTableModel",
+    "QSortFilterProxyModel",
+    "QRegExp",
     "Qt",
     "QRect",
+    "QTableView",
     "QFileDialog",
     "QCheckBox",
     "QTextEdit",

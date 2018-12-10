@@ -517,6 +517,7 @@ class PostgresDB(Base):
         etag: str,
         runner_id=None,
         metadata=None,
+        result=None,
         state=None,
         attempts=None,
         **kwargs
@@ -527,6 +528,7 @@ class PostgresDB(Base):
         :param etag:
         :param runner_id:
         :param metadata:
+        :param result:
         :param state:
         :param attempts:
         :param worker_id:
@@ -542,6 +544,7 @@ class PostgresDB(Base):
         for n, v in [
             ("str_runner_id", runner_id),
             ("json_metadata", json.dumps(metadata) if metadata else None),
+            ("bytea_result", psycopg2.Binary(result) if result else None),
             ("enum_state", state),
             ("int_attempts", attempts),
         ]:
@@ -618,6 +621,7 @@ class PostgresDB(Base):
             layer_id=True,
             task_id=True,
             worker_id=True,
+            key=True,
         )
 
         results = []
@@ -834,9 +838,12 @@ class PostgresDB(Base):
 
         update = ", ".join(sets)
         values.append(id_)
-        values.append(etag)
 
-        sql = f"UPDATE {table_name} SET {update} WHERE {id_column}=%s AND str_etag=%s;"
+        sql = f"UPDATE {table_name} SET {update} WHERE {id_column}=%s"
+        if etag:
+            sql += " AND str_etag=%s"
+            values.append(etag)
+
         return sql, values
 
     @classmethod
@@ -939,12 +946,16 @@ class PostgresDB(Base):
                 sub_and.append("str_key IN (%s)" % ", ".join(["%s"] * len(f.keys)))
                 values.extend(f.keys)
 
-            ors.append("(%s)" % " AND ".join(sub_and))
+            if sub_and:
+                ors.append("(%s)" % " AND ".join(sub_and))
 
-        where = " OR ".join(ors)
+        where = ""
+        if ors:
+            where = "WHERE " + " OR ".join(ors)
+
         return (
             f"SELECT * FROM {table_name} "
-            f"WHERE {where} "
+            f"{where} "
             f"ORDER BY {sort_by} "
             "LIMIT %s OFFSET %s;"
         ), values + [q.limit, q.offset]

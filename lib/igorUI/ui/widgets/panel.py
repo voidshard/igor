@@ -1,7 +1,7 @@
 import uuid
 
-from conversation.ui.manifest import *
-from conversation.ui import resources
+from igorUI.ui.manifest import *
+from igorUI.ui import resources
 
 
 class Panel(QDockWidget):
