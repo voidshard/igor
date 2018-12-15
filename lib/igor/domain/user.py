@@ -41,6 +41,7 @@ class User(Serializable):
         :return: str
 
         """
+        # TODO: this isn't salted :(
         return hashlib.sha512(value.encode("utf8")).hexdigest()
 
     @password.setter

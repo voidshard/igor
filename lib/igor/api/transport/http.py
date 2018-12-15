@@ -63,7 +63,7 @@ def error_wrap(f):
 
         try:
             return f(*args, **kwargs)
-        except (exc.IllegalOp, api_exc.InvalidSpec) as e:
+        except (exc.IllegalOp, api_exc.InvalidSpec, exc.InvalidArg, exc.InvalidState) as e:
             return self._err(e), 400  # you sent something unexpected
         except (api_exc.Unauthorized, api_exc.Forbidden) as e:
             return self._err(e), 401  # .. who are you again?
