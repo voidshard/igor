@@ -44,9 +44,6 @@ If you're planning on running the test suite you'll need docker too. Docker & do
 
 ## Concepts
 
-Here are the terms and design goals of Igor. There are many ways of building such a system and
-each has their own good and bad points. 
-
 ###### Terminology
 
 Some terminology to get us started!
