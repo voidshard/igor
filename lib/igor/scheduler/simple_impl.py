@@ -445,7 +445,7 @@ class Simple(Base):
 
             try:
                 self._svc.create_user(user)
-            except exc.WriteFailError:
+            except exc.WriteConflictError:
                 logger.warn(f"failed to create admin: {username}, assuming user already exists")
                 pass
 

@@ -1,4 +1,5 @@
 import copy
+import time
 import random
 import uuid
 
@@ -76,9 +77,11 @@ class TestTask:
         # arrange
         expected = {
             "user_id": str(uuid.uuid4()),
-            "id": str(uuid.uuid4()),
+            "task_id": str(uuid.uuid4()),
             "job_id": str(uuid.uuid4()),
+            "paused": int(time.time()),
             "layer_id": str(uuid.uuid4()),
+            "result": str(uuid.uuid4()),
             "key": str(uuid.uuid4()),
             "state": "FUBAR",
             "etag": str(uuid.uuid4()),

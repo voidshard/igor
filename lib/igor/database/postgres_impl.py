@@ -64,7 +64,7 @@ class PostgresDB(Base):
             self._conn.commit()
         except psycopg2.IntegrityError:
             self._conn.rollback()
-            raise exc.WriteFailError(f"user with name exists already: {user.name}")
+            raise exc.WriteConflictError(f"user with name exists already: {user.name}")
         except Exception as e:
             self._conn.rollback()
             raise e
@@ -128,7 +128,7 @@ class PostgresDB(Base):
             cur.close()
 
         if cur.rowcount != 1:
-            raise exc.WriteFailError(f'failed to update user {user_id} {etag}')
+            raise exc.WriteConflictError(f'failed to update user {user_id} {etag}')
 
         return new_tag
 
@@ -223,7 +223,7 @@ class PostgresDB(Base):
 
         for t in tasks:
             if t.layer_id not in layer_ids:
-                raise exc.WriteFailError(
+                raise exc.WriteConflictError(
                     f"layer for layer_id {t.layer_id} not supplied in job {job.id}"
                 )
 
@@ -296,6 +296,9 @@ class PostgresDB(Base):
         try:
             cur.execute(sql, values)
             self._conn.commit()
+        except psycopg2.DataError:
+            self._conn.rollback()
+            raise exc.InvalidState(f"state {state} is not a permitted state")
         except Exception as e:
             self._conn.rollback()
             raise e
@@ -303,7 +306,7 @@ class PostgresDB(Base):
             cur.close()
 
         if cur.rowcount != 1:
-            raise exc.WriteFailError(f'failed to update job {job_id} {etag}')
+            raise exc.WriteConflictError(f'failed to update job {job_id} {etag}')
 
         return new_tag
 
@@ -435,6 +438,9 @@ class PostgresDB(Base):
         try:
             cur.execute(sql, values)
             self._conn.commit()
+        except psycopg2.DataError:
+            self._conn.rollback()
+            raise exc.InvalidState(f"state {state} is not a permitted state")
         except Exception as e:
             self._conn.rollback()
             raise e
@@ -442,7 +448,7 @@ class PostgresDB(Base):
             cur.close()
 
         if cur.rowcount != 1:
-            raise exc.WriteFailError(f'failed to update layer {layer_id} {etag}')
+            raise exc.WriteConflictError(f'failed to update layer {layer_id} {etag}')
 
         return new_tag
 
@@ -499,7 +505,7 @@ class PostgresDB(Base):
             cur.executemany(self.INSERT_TSK, task_data)
             self._conn.commit()
         except psycopg2.IntegrityError:
-            raise exc.WriteFailError(
+            raise exc.WriteConflictError(
                 f"integrity err: failed to create tasks for layer: {layer_id}"
             )
         except Exception as e:
@@ -509,7 +515,26 @@ class PostgresDB(Base):
             cur.close()
 
         if cur.rowcount != len(tasks):
-            raise exc.WriteFailError(f'failed to create tasks for layer: {layer_id}')
+            raise exc.WriteConflictError(f'failed to create tasks for layer: {layer_id}')
+
+    @staticmethod
+    def _to_binary(value) -> psycopg2.Binary:
+        """Encode whatever value is given to be a postgres Binary obj.
+
+        This assumes the given value is a python simple type of some sort.
+
+        :param value: ?
+        :return: psycopg2.Binary
+
+        """
+        if value is None:
+            return psycopg2.Binary(None)
+        if isinstance(value, (str, bool, int, float, list, dict)):
+            return psycopg2.Binary(bytes(str(value), encoding="utf8"))
+        if isinstance(value, bytes):
+            # avoid double encoding ie. b'b'mydata''
+            return psycopg2.Binary(bytes(str(value, encoding="utf8"), encoding="utf8"))
+        raise exc.InvalidArg(f"result type unsupported {type(value)}")
 
     def update_task(
         self,
@@ -517,7 +542,6 @@ class PostgresDB(Base):
         etag: str,
         runner_id=None,
         metadata=None,
-        result=None,
         state=None,
         attempts=None,
         **kwargs
@@ -528,9 +552,9 @@ class PostgresDB(Base):
         :param etag:
         :param runner_id:
         :param metadata:
-        :param result:
         :param state:
         :param attempts:
+        :param result:
         :param worker_id:
         :return: str
 
@@ -544,7 +568,6 @@ class PostgresDB(Base):
         for n, v in [
             ("str_runner_id", runner_id),
             ("json_metadata", json.dumps(metadata) if metadata else None),
-            ("bytea_result", psycopg2.Binary(result) if result else None),
             ("enum_state", state),
             ("int_attempts", attempts),
         ]:
@@ -559,6 +582,9 @@ class PostgresDB(Base):
         if 'paused' in kwargs:
             update["time_paused"] = kwargs['paused']
 
+        if 'result' in kwargs:
+            update["bytea_result"] = self._to_binary(kwargs["result"])
+
         sql, values = self._to_update_query(
             self._T_TSK, "str_task_id", task_id, etag, update
         )
@@ -567,6 +593,9 @@ class PostgresDB(Base):
         try:
             cur.execute(sql, values)
             self._conn.commit()
+        except psycopg2.DataError:
+            self._conn.rollback()
+            raise exc.InvalidState(f"state {state} is not a permitted state")
         except Exception as e:
             self._conn.rollback()
             raise e
@@ -574,7 +603,7 @@ class PostgresDB(Base):
             cur.close()
 
         if cur.rowcount != 1:
-            raise exc.WriteFailError(f'failed to update task {task_id} {etag}')
+            raise exc.WriteConflictError(f'failed to update task {task_id} {etag}')
 
         return new_tag
 
@@ -601,9 +630,11 @@ class PostgresDB(Base):
             cur.execute(sql, values)
 
             for row in cur.fetchall():
-                results.append(domain.Task.decode({
+                t = domain.Task.decode({
                     k[k.index("_") + 1:]: v for k, v in row.items()
-                }))
+                })
+                t.result = bytes(t.result) if t.result else None
+                results.append(t)
 
         return results
 
@@ -642,7 +673,7 @@ class PostgresDB(Base):
 
         """
         with self._conn.cursor() as cur:
-            cur.execute(f"SELECT count(*) FROM {self._T_WKR} WHERE str_task_id=null;")
+            cur.execute(f"SELECT count(*) FROM {self._T_WKR} WHERE str_task_id is null;")
             return cur.fetchone()[0]
 
     def idle_workers(self, limit: int = _DEFAULT_LIMIT, offset: int = 0) -> list:
@@ -659,11 +690,11 @@ class PostgresDB(Base):
             cur.execute(
                 (
                     f"SELECT * FROM {self._T_WKR} "
-                    f"WHERE str_task_id=%s "
+                    f"WHERE str_task_id is null "
                     f"ORDER BY time_created "
                     f"LIMIT %s OFFSET %s;"
                 ),
-                (None, limit, offset)
+                (limit, offset)
             )
 
             for row in cur.fetchall():
@@ -791,7 +822,7 @@ class PostgresDB(Base):
             cur.close()
 
         if cur.rowcount != 1:
-            raise exc.WriteFailError(f'failed to update worker {worker_id} {etag}')
+            raise exc.WriteConflictError(f'failed to update worker {worker_id} {etag}')
 
         return new_tag
 

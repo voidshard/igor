@@ -3,104 +3,128 @@ import time
 import uuid
 
 from igor import domain
+from igor import enums
 from igor import exceptions as exc
-from igor.database.mongo_impl import MongoDB
+from igor.database.postgres_impl import PostgresDB
 
 from integration import utils
 
 
-class TestMongo:
+class DatabaseTest:
+    """Defines a standard set of tests for a db to complete.
+
+    Inherit & override the setup / tear down and clear functions.
+
+    """
 
     db = None
     db_container = None
-    CONTAINER_START_WAIT_TIME = 1
+    conn = None
 
     @classmethod
     def setup_class(cls):
-        # start ourselves a new container & give it some time to get ready
-        client = utils.Client()
-        cls.db_container = client.mongo_container()
-        cls.db_container.start()
-        time.sleep(cls.CONTAINER_START_WAIT_TIME)
-
-        # connect to the container
-        cls.db = MongoDB(host="localhost", archive_mode=True)
+        pass
 
     @classmethod
     def teardown_class(cls):
-        try:
-            cls.db_container.stop()
-        except:
-            pass
+        pass
 
     @classmethod
     def clear_db(cls):
-        """Helper func to drop everything in the db.
+        pass
 
-        This uses mongo specific knowledge .. but this IS the TestMongo class.
+    def _user(self, is_admin=False):
+        """Create test user
+
+        :return: User
 
         """
-        cls.db._conn[MongoDB._DB][MongoDB._T_JOB].remove({})
-        cls.db._conn[MongoDB._DB][MongoDB._T_LYR].remove({})
-        cls.db._conn[MongoDB._DB][MongoDB._T_TSK].remove({})
-        cls.db._conn[MongoDB._DB][MongoDB._T_WKR].remove({})
-        cls.db._conn[MongoDB._DB][MongoDB._A_JOB].remove({})
-        cls.db._conn[MongoDB._DB][MongoDB._A_LYR].remove({})
-        cls.db._conn[MongoDB._DB][MongoDB._A_TSK].remove({})
+        u = domain.User()
+        u.name = uuid.uuid4().hex
+        u.password = "foobar"
+        u.is_admin = is_admin
+        self.db.create_user(u)
+        return u
 
-    def _job(self, key=None, meta=None):
+    def _job(self, key=None, meta=None, user=None):
         """Create test job
 
         :param key:
         :return: Job
 
         """
+        if not user:
+            user = self._user()
+
         l = domain.Layer(key=key)
+        l.user_id = user.id
         l.metadata = meta or {}
 
         t = domain.Task(key=key)
+        t.user_id = user.id
         t.layer_id = l.id
         t.type = "sometype"
         t.metadata = meta or {}
 
         j = domain.Job(key=key)
+        j.user_id = user.id
         j.metadata = meta or {}
+
+        l.job_id = j.id
+
         self.db.create_job(j, [l], [t])
         return j
 
-    def _layer(self, key=None, meta=None):
+    def _layer(self, key=None, meta=None, user=None):
         """Create test layer
 
         :param key:
         :return: Layer
 
         """
+        if not user:
+            user = self._user()
+
         l = domain.Layer(key=key)
+        l.user_id = user.id
         l.metadata = meta or {}
 
         j = domain.Job(key=key)
+        j.user_id = user.id
         j.metadata = meta or {}
-        self.db.create_job(j, [l], [])
 
+        l.job_id = j.id
+
+        self.db.create_job(j, [l], [])
         return l
 
-    def _task(self, key=None, meta=None):
+    def _task(self, key=None, meta=None, user=None):
         """Create test task
 
         :param key:
         :return: Task
 
         """
+        if not user:
+            user = self._user()
+
         l = domain.Layer(key=key)
         l.metadata = meta or {}
+        l.user_id = user.id
 
         t = domain.Task(key=key)
         t.layer_id = l.id
         t.type = "sometype"
+        t.user_id = user.id
         t.metadata = meta or {}
 
         j = domain.Job(key=key)
+        j.user_id = user.id
         j.metadata = meta or {}
+
+        l.job_id = j.id
+        t.job_id = j.id
+
         self.db.create_job(j, [l], [t])
 
         return t
@@ -109,22 +133,6 @@ class TestMongo:
         w = domain.Worker(key=key)
         self.db.create_worker(w)
         return w
-
-    def test_force_delete_archives(self):
-        # arrange
-        j = self._job()
-
-        # act
-        self.db.force_delete_job(j.id)
-
-        job_docs = list(self.db._conn[MongoDB._DB][MongoDB._A_JOB].find({}))
-        lyr_docs = list(self.db._conn[MongoDB._DB][MongoDB._A_LYR].find({}))
-        tsk_docs = list(self.db._conn[MongoDB._DB][MongoDB._A_TSK].find({}))
-
-        # assert
-        assert len(job_docs) == 1
-        assert len(lyr_docs) == 1
-        assert len(tsk_docs) == 1
 
     def test_idle_workers_ok(self):
         # arrange
@@ -147,11 +155,12 @@ class TestMongo:
         # arrange
         self.clear_db()
 
+        task = self._task()
+
         workers = sorted([
             self._worker().id,
             self._worker().id,
             self._worker().id,
-
         ])
 
         processing = [
@@ -163,9 +172,9 @@ class TestMongo:
             self.db.update_worker(
                 w.id,
                 w.etag,
-                job_id=str(uuid.uuid4()),
-                layer_id=str(uuid.uuid4()),
-                task_id=str(uuid.uuid4()),
+                job_id=task.job_id,
+                layer_id=task.layer_id,
+                task_id=task.id,
                 task_started=time.time(),
             )
 
@@ -199,16 +208,17 @@ class TestMongo:
     def test_create_user_enforces_unique_name(self):
         # arrange
         self.clear_db()
-        u = domain.User(name="Bob")
-        self.db.create_user(u)
+        u = self._user()
 
         # act & assert
-        with pytest.raises(exc.WriteFailError):
+        with pytest.raises(exc.WriteConflictError):
             self.db.create_user(u)
 
     def test_idle_worker_count_ignores_those_working(self):
         # arrange
         self.clear_db()
+
+        task = self._task()
 
         workers = [  # make 5 workers
             self._worker(),
@@ -227,9 +237,9 @@ class TestMongo:
             self.db.update_worker(
                 w.id,
                 w.etag,
-                job_id=str(uuid.uuid4()),
-                layer_id=str(uuid.uuid4()),
-                task_id=str(uuid.uuid4()),
+                job_id=task.job_id,
+                layer_id=task.layer_id,
+                task_id=task.id,
                 task_started=time.time(),
             )
 
@@ -243,18 +253,19 @@ class TestMongo:
         # arrange
         w = self._worker()
         q = domain.Query(filters=[domain.Filter(worker_ids=[w.id])], limit=1)
+        task = self._task()
 
         old_tag = w.etag
         expect = {
-            "job_id": str(uuid.uuid4()),
-            "layer_id": str(uuid.uuid4()),
-            "task_id": str(uuid.uuid4()),
-            "task_started": time.time(),
-            "task_finished": time.time(),
-            "last_ping": time.time(),
+            "job_id": task.job_id,
+            "layer_id": task.layer_id,
+            "task_id": task.id,
+            "task_started": int(time.time()),
+            "task_finished": int(time.time()),
+            "last_ping": int(time.time()),
             "metadata": {"ab": "cd", "a": True, "b": False, "c": 1},
         }
-        
+
         # act
         self.db.update_worker(
             w.id,
@@ -305,17 +316,51 @@ class TestMongo:
         assert len(result) == 1
         assert isinstance(result[0], domain.Worker)
 
-    def test_task_update_ok(self):
+    @pytest.mark.parametrize("given, expect", [
+        ("Foobar", bytes("Foobar", encoding="utf8")),
+        ({"foo": "bar"}, bytes(str({"foo": "bar"}), encoding="utf8")),
+        ([1, "foo", True, "bar"], bytes(str([1, "foo", True, "bar"]), encoding="utf8")),
+        (b"Foobar", bytes("Foobar", encoding="utf8")),
+        (56789, bytes('56789', encoding="utf8")),
+        (5.132, bytes('5.132', encoding="utf8")),
+        (True, bytes('True', encoding="utf8")),
+        (None, None),
+    ])
+    def test_update_task_result_ok(self, given, expect):
         # arrange
         t = self._task()
         q = domain.Query(filters=[domain.Filter(task_ids=[t.id])], limit=1)
 
         # act
+        self.db.update_task(t.id, t.etag, result=given)
+
+        task = self.db.get_tasks(q)[0]
+
+        # assert
+        assert task.id == t.id
+        assert task.result == expect
+
+    def test_update_task_result_raises_on_invalid_type(self):
+        # arrange
+        t = self._task()
+
+        class Foo:
+            pass
+
+        # act & assert
+        with pytest.raises(exc.InvalidArg):
+            self.db.update_task(t.id, t.etag, result=Foo())
+
+    def test_task_update_ok(self):
+        # arrange
+        t = self._task()
+        q = domain.Query(filters=[domain.Filter(task_ids=[t.id])], limit=1)
+
         old_tag = t.etag
         expect = {
             "runner_id": "abc1234567890",
             "metadata": {"ab": "cd", "a": True, "b": False, "c": 1},
-            "state": "FOOBAR",
+            "state": enums.State.PENDING.value,
         }
 
         # act
@@ -332,21 +377,58 @@ class TestMongo:
             "state": task.state,
         } == expect
 
-    def test_task_delete_ok(self):
+    def test_task_update_raises_on_invalid_state(self):
+        # arrange
+        t = self._task()
+
+        # act
+        expect = {
+            "runner_id": "abc1234567890",
+            "metadata": {"ab": "cd", "a": True, "b": False, "c": 1},
+            "state": "FOO",
+        }
+
+        # act & assert
+        with pytest.raises(exc.InvalidState):
+            self.db.update_task(t.id, t.etag, **expect)
+
+    def test_task_update_raises_on_invalid_id(self):
+        # arrange
+        t = self._task()
+
+        # act
+        expect = {
+            "runner_id": "abc1234567890",
+            "metadata": {"ab": "cd", "a": True, "b": False, "c": 1},
+            "state": enums.State.RUNNING.value,
+        }
+
+        # act & assert
+        with pytest.raises(exc.WriteConflictError):
+            self.db.update_task("??", t.etag, **expect)
+
+    def test_task_update_raises_on_invalid_etag(self):
+        # arrange
+        t = self._task()
+
+        # act & assert
+        with pytest.raises(exc.WriteConflictError):
+            self.db.update_task(t.id, "lolwhat", runner_id="something")
+
+    def test_task_update_permits_write_with_null_etag(self):
         # arrange
         t = self._task()
         q = domain.Query(filters=[domain.Filter(task_ids=[t.id])], limit=1)
 
-        tasks_before = self.db.get_tasks(q)
-
         # act
-        self.db.delete_tasks([t.id])
+        self.db.update_task(t.id, None, runner_id="something")
 
-        tasks_after = self.db.get_tasks(q)
+        task = self.db.get_tasks(q)[0]
 
         # assert
-        assert len(tasks_before) == 1
-        assert len(tasks_after) == 0
+        assert task.id == t.id
+        assert task.etag != t.etag
+        assert task.runner_id == 'something'
 
     def test_task_create_ok(self):
         # arrange
@@ -354,6 +436,7 @@ class TestMongo:
 
         t = domain.Task()
         t.type = "sometype"
+        t.job_id = l.job_id
         t.layer_id = l.id
         q = domain.Query(filters=[domain.Filter(task_ids=[t.id])], limit=1)
 
@@ -376,8 +459,35 @@ class TestMongo:
         l = self._layer()
 
         # act & assert
-        with pytest.raises(exc.WriteFailError):
+        with pytest.raises(exc.WriteConflictError):
             self.db.update_layer("???", l.etag, runner_id="fooboo")
+
+    def test_layer_update_raises_on_invalid_state(self):
+        """We should be forbidden to write if we give an invalid id
+        """
+        # arrange
+        l = self._layer()
+
+        # act & assert
+        with pytest.raises(exc.InvalidState):
+            self.db.update_layer(l.id, l.etag, state="FOOBAR")
+
+    def test_layer_update_permitted_on_null_etag(self):
+        """We should be forbidden to write if we give an invalid etag
+        """
+        # arrange
+        l = self._layer()
+        q = domain.Query(filters=[domain.Filter(layer_ids=[l.id])], limit=1)
+
+        # act
+        self.db.update_layer(l.id, None, runner_id="fooboo")
+
+        layer = self.db.get_layers(q)[0]
+
+        # assert
+        assert l.id == layer.id
+        assert l.etag != layer.etag
+        assert layer.runner_id == 'fooboo'
 
     def test_layer_update_raises_on_invalid_etag(self):
         """We should be forbidden to write if we give an invalid etag
@@ -386,7 +496,7 @@ class TestMongo:
         l = self._layer()
 
         # act & assert
-        with pytest.raises(exc.WriteFailError):
+        with pytest.raises(exc.WriteConflictError):
             self.db.update_layer(l.id, "garbage", runner_id="fooboo")
 
     def test_layer_update_ok(self):
@@ -399,7 +509,7 @@ class TestMongo:
         expect = {
             "runner_id": "abc1234567890",
             "metadata": {"ab": "cd", "a": True, "b": False, "c": 1},
-            "state": "FOOBAR",
+            "state": enums.State.PENDING.value,
             "priority": 10000,
         }
 
@@ -425,8 +535,18 @@ class TestMongo:
         j = self._job()
 
         # act & assert
-        with pytest.raises(exc.WriteFailError):
+        with pytest.raises(exc.WriteConflictError):
             self.db.update_job("???", j.etag, runner_id="fooboo")
+
+    def test_job_update_raises_on_invalid_state(self):
+        """We should be forbidden to write if we give an invalid etag
+        """
+        # arrange
+        j = self._job()
+
+        # act & assert
+        with pytest.raises(exc.InvalidState):
+            self.db.update_job(j.id, j.etag, state="foobar")
 
     def test_job_update_raises_on_invalid_etag(self):
         """We should be forbidden to write if we give an invalid etag
@@ -435,8 +555,23 @@ class TestMongo:
         j = self._job()
 
         # act & assert
-        with pytest.raises(exc.WriteFailError):
+        with pytest.raises(exc.WriteConflictError):
             self.db.update_job(j.id, "garbage", runner_id="fooboo")
+
+    def test_job_update_permits_write_on_null_etag(self):
+        # arrange
+        j = self._job()
+        q = domain.Query(filters=[domain.Filter(job_ids=[j.id])], limit=1)
+
+        # act
+        self.db.update_job(j.id, None, runner_id="fooboo")
+
+        job = self.db.get_jobs(q)[0]
+
+        # assert
+        assert j.id == job.id
+        assert j.etag != job.etag
+        assert job.runner_id == "fooboo"
 
     def test_job_update_ok(self):
         # arrange
@@ -447,7 +582,7 @@ class TestMongo:
         expect = {
             "runner_id": "abc1234567890",
             "metadata": {"ab": "cd", "a": True, "b": False, "c": 1},
-            "state": "FOOBAR",
+            "state": enums.State.QUEUED.value,
         }
 
         # act
@@ -464,7 +599,7 @@ class TestMongo:
             "state": job.state,
         } == expect
 
-    def test_job_delete_ok(self):
+    def test_job_force_delete_ok(self):
         # arrange
         j = self._job()
         q = domain.Query(filters=[domain.Filter(job_ids=[j.id])], limit=1)
@@ -472,7 +607,7 @@ class TestMongo:
         before_delete = self.db.get_jobs(q)
 
         # act
-        self.db.delete_jobs([j.id])
+        self.db.force_delete_job(j.id)
 
         after_delete = self.db.get_jobs(q)
 
@@ -482,9 +617,15 @@ class TestMongo:
 
     def test_job_create_ok(self):
         # arrange
+        u = self._user()
+
         l = domain.Layer()
+        l.user_id = u.id
 
         j = domain.Job(key="mykey")
+        j.user_id = u.id
+        l.job_id = j.id
+
         q = domain.Query(filters=[domain.Filter(job_ids=[j.id])], limit=1)
 
         # act
@@ -496,3 +637,48 @@ class TestMongo:
         assert len(jobs) == 1
         assert isinstance(jobs[0], domain.Job)
         assert jobs[0].id == j.id
+
+
+class TestPostgres(DatabaseTest):
+    """Standard DB tests, using Postgres
+    """
+
+    @classmethod
+    def setup_class(cls):
+        # start ourselves a new container w/ empty db
+        client = utils.Client()
+        cls.db_container = client.postgres_container()
+
+        # connect to the container
+        cls.db = PostgresDB(host="localhost")
+        cls.conn = cls.db._conn
+
+    @classmethod
+    def teardown_class(cls):
+        cls.db_container.stop()
+
+    @classmethod
+    def clear_db(cls):
+        """Helper func to drop everything in the db.
+
+        """
+        cur = cls.conn.cursor()
+
+        # update this table to remove any FK problems
+        cur.execute((
+            f"UPDATE {PostgresDB._T_WKR} "
+            f"SET str_task_id=null, "
+            f"str_layer_id=null, "
+            f"str_job_id=null;"
+        ))
+
+        for table in [  # remove all data, order matters
+            PostgresDB._T_WKR,
+            PostgresDB._T_TSK,
+            PostgresDB._T_LYR,
+            PostgresDB._T_JOB,
+            PostgresDB._T_USR,
+        ]:
+            cur.execute(f"DELETE FROM {table};")
+
+        cls.conn.commit()

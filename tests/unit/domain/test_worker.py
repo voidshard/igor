@@ -10,7 +10,7 @@ class TestWorker:
     def test_encode_decode(self):
         # arrange
         expected = {
-            "id": str(uuid.uuid4()),
+            "worker_id": str(uuid.uuid4()),
             "last_ping": time.time() - random.randint(10, 100),
             "host": "39.1.21.1",
             "job_id": str(uuid.uuid4()),

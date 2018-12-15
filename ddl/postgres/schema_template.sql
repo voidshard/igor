@@ -6,7 +6,7 @@ CREATE OR REPLACE LANGUAGE plpgsql;
 ---
 CREATE DATABASE igor WITH ENCODING 'UTF8';
 
-\connect igor
+\connect igor;
 
 ---
 --- States defined for use as enums

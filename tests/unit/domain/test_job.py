@@ -1,3 +1,4 @@
+import time
 import uuid
 
 from igor import domain
@@ -9,7 +10,8 @@ class TestJob:
         # arrange
         expected = {
             "user_id": str(uuid.uuid4()),
-            "id": str(uuid.uuid4()),
+            "paused": int(time.time()),
+            "job_id": str(uuid.uuid4()),
             "etag": str(uuid.uuid4()),
             "state": str(uuid.uuid4()),
             "key": str(uuid.uuid4()),

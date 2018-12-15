@@ -5,7 +5,7 @@ import uuid
 from igor import domain
 from igor import service
 from igor import exceptions as exc
-from igor.database.mongo_impl import MongoDB
+from igor.database.postgres_impl import PostgresDB
 
 from integration import utils
 
@@ -21,12 +21,10 @@ class TestService:
     def setup_class(cls):
         # start ourselves a new container & give it some time to get ready
         client = utils.Client()
-        cls.db_container = client.mongo_container()
-        cls.db_container.start()
-        time.sleep(cls.CONTAINER_START_WAIT_TIME)
+        cls.db_container = client.postgres_container()
 
         # connect to the container
-        cls.db = MongoDB(host="localhost")
+        cls.db = PostgresDB(host="localhost")
 
         def hack(*args):
             return cls.db
@@ -41,53 +39,98 @@ class TestService:
         except:
             pass
 
-    def _job(self, key=None, meta=None):
+    def _user(self, is_admin=False):
+        """Create test user
+
+        :return: User
+
+        """
+        u = domain.User()
+        u.name = uuid.uuid4().hex
+        u.password = "foobar"
+        u.is_admin = is_admin
+        self.db.create_user(u)
+        return u
+
+    def _job(self, key=None, meta=None, user=None):
         """Create test job
 
         :param key:
         :return: Job
 
         """
-        l = domain.Layer()
+        if not user:
+            user = self._user()
+
+        l = domain.Layer(key=key)
+        l.user_id = user.id
+        l.metadata = meta or {}
+
+        t = domain.Task(key=key)
+        t.user_id = user.id
+        t.layer_id = l.id
+        t.type = "sometype"
+        t.metadata = meta or {}
 
         j = domain.Job(key=key)
+        j.user_id = user.id
         j.metadata = meta or {}
-        self.db.create_job(j, [l], [])
+
+        l.job_id = j.id
+
+        self.db.create_job(j, [l], [t])
         return j
 
-    def _layer(self, key=None, meta=None):
+    def _layer(self, key=None, meta=None, user=None):
         """Create test layer
 
         :param key:
         :return: Layer
 
         """
+        if not user:
+            user = self._user()
+
         l = domain.Layer(key=key)
+        l.user_id = user.id
         l.metadata = meta or {}
 
         j = domain.Job(key=key)
+        j.user_id = user.id
         j.metadata = meta or {}
-        self.db.create_job(j, [l], [])
 
+        l.job_id = j.id
+
+        self.db.create_job(j, [l], [])
         return l
 
-    def _task(self, key=None, meta=None):
+    def _task(self, key=None, meta=None, user=None):
         """Create test task
 
         :param key:
         :return: Task
 
         """
+        if not user:
+            user = self._user()
+
         l = domain.Layer(key=key)
         l.metadata = meta or {}
+        l.user_id = user.id
 
         t = domain.Task(key=key)
         t.layer_id = l.id
         t.type = "sometype"
+        t.user_id = user.id
         t.metadata = meta or {}
 
         j = domain.Job(key=key)
+        j.user_id = user.id
         j.metadata = meta or {}
+
+        l.job_id = j.id
+        t.job_id = j.id
+
         self.db.create_job(j, [l], [t])
 
         return t

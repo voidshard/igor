@@ -1,3 +1,4 @@
+import time
 import random
 import uuid
 
@@ -10,7 +11,8 @@ class TestLayer:
         # arrange
         expected = {
             "user_id": str(uuid.uuid4()),
-            "id": str(uuid.uuid4()),
+            "layer_id": str(uuid.uuid4()),
+            "paused": int(time.time()),
             "job_id": str(uuid.uuid4()),
             "key": str(uuid.uuid4()),
             "state": "FUBAR",

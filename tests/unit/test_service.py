@@ -141,7 +141,6 @@ class TestIgorService:
             job_id=None,
             layer_id=None,
             task_id=None,
-            retries=3,
         )
 
         update_task.assert_called_with(
@@ -151,7 +150,6 @@ class TestIgorService:
             worker_id=None,
             metadata=expected_meta,
             attempts=new_attempts,
-            retries=3,
         )
 
     def test_worker_ping(self):
@@ -183,13 +181,11 @@ class TestIgorService:
             },
             "state": "SOME_STATE",
         }
-        test_retries = {"retries": random.randint(0, 4)}
 
         # act
         self.svc.update_job(
             *test_args,
             **test_kwargs,
-            **test_retries,
         )
 
         # assert
@@ -212,13 +208,11 @@ class TestIgorService:
             },
             "state": "SOME_STATE",
         }
-        test_retries = {"retries": random.randint(0, 4)}
 
         # act
         self.svc.update_layer(
             *test_args,
             **test_kwargs,
-            **test_retries,
         )
 
         # assert
@@ -234,6 +228,7 @@ class TestIgorService:
             "worker_id": str(uuid.uuid4()),
             "runner_id": str(uuid.uuid4()),
             "attempts": None,
+            "result": "foobar",
             "metadata": {
                 "foo": "bar",
                 "yes": False,
@@ -242,13 +237,11 @@ class TestIgorService:
             },
             "state": "SOME_STATE",
         }
-        test_retries = {"retries": random.randint(0, 4)}
 
         # act
         self.svc.update_task(
             *test_args,
             **test_kwargs,
-            **test_retries,
         )
 
         # assert
@@ -274,13 +267,11 @@ class TestIgorService:
             "task_finished": time.time(),
             "last_ping": time.time(),
         }
-        test_retries = {"retries": random.randint(0, 4)}
 
         # act
         self.svc.update_worker(
             *test_args,
             **test_kwargs,
-            **test_retries,
         )
 
         # assert

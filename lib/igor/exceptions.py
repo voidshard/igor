@@ -1,5 +1,5 @@
 
-class WriteFailError(Exception):
+class WriteConflictError(Exception):
     """ A generic "we failed to write to the db"
     """
     pass
@@ -60,7 +60,7 @@ class UserNotFound(NotFound):
 
 
 class InvalidState(IllegalOp):
-    """Generic "the object is in the wrong state to do the thing"
+    """Generic "the object is in the wrong state to do the thing" or the state given isn't valid.
     """
     pass
 

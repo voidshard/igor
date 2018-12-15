@@ -69,7 +69,7 @@ def error_wrap(f):
             return self._err(e), 401  # .. who are you again?
         except exc.NotFound as e:
             return self._err(e), 404  # nope can't find that
-        except (exc.WriteFailError, exc.WorkerMismatch, api_exc.WriteConflict) as e:
+        except (exc.WriteConflictError, exc.WorkerMismatch, api_exc.WriteConflict) as e:
             return self._err(e), 409  # sorry someone beat you to it
         except Exception as e:
             return self._err(e), 500  # ???

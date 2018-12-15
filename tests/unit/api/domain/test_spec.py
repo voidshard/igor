@@ -121,18 +121,6 @@ class TestJobSpec:
                 "type": enums.LoggerType.STDOUT.value,
             }
         ),
-        (
-            {
-                "type": enums.LoggerType.UDP.value,
-                "host": "123.12.1.2",
-                "port": "7123"
-            },
-            {
-                "type": enums.LoggerType.UDP.value,
-                "host": "123.12.1.2",
-                "port": 7123
-            },
-        ),
     ])
     def test_to_logger_config(self, given, expect):
         # act
@@ -140,34 +128,6 @@ class TestJobSpec:
 
         # assert
         assert result == expect
-
-    @pytest.mark.parametrize('given', [  # arrange
-        {
-            "type": "What",
-        },
-        {
-            "type": enums.LoggerType.UDP.value,
-            "host": "123.12.1.2",
-            "port": "0",  # too low
-        },
-        {
-            "type": enums.LoggerType.UDP.value,
-            "host": "123.12.1.2",
-            "port": "65536",  # too high
-        },
-        {
-            "type": enums.LoggerType.UDP.value,
-            "host": "123.12.1.2",  # no port
-        },
-        {
-            "type": enums.LoggerType.UDP.value,
-            "port": '8032',  # no host
-        },
-    ])
-    def test_to_logger_config_raises_on_invalid(self, given):
-        # act & assert
-        with pytest.raises(exc.InvalidSpec):
-            spec.JobSpec.to_logger_config(given)
 
     @pytest.mark.parametrize('given', [  # arrange
         {"user_id": None},

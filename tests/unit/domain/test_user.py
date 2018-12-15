@@ -10,7 +10,7 @@ class TestUser:
         expected = {
             "is_admin": True,
             "password": "blah",
-            "id": str(uuid.uuid4()),
+            "user_id": str(uuid.uuid4()),
             "etag": str(uuid.uuid4()),
             "key": str(uuid.uuid4()),
             "metadata": {
