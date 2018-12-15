@@ -213,7 +213,7 @@ You must define all layers that you want upfront. Igor doesn't mind it if it goe
 a layer and finds there are no tasks. It just considers it "complete" immediately :)
 
 You can add a task to an already existing layer with 
-- POST /v1/layers/<id>/tasks
+- POST /v1/layers/[layer_id]/tasks
 ```json
 {"name": "a_new_task", "cmd": ["sleep", "10"]}
 ```
