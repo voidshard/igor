@@ -108,7 +108,7 @@ Other systems allow you to define tasks with support for chains, groups and sets
 as an afterthought. Igor is built entirely the other way around. And when I say *entirely* I 
 mean it: you can define layers *without* tasks if you so wish. 
 
-Why might want to do this? We'll get to that later...
+Why might you want to do this? We'll get to that later...
 
 ###### Visibility, tracking all the things
 
