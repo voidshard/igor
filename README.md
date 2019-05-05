@@ -92,7 +92,6 @@ There are other objects that are used to talk to the API, for searching and what
     A filter is an instruction as to what to match. A query will return any result(s) that 
     match any of the given filters.
 
-
 Ok now that you have the basic objects in mind, onward with Igor concepts! 
 
 
@@ -108,10 +107,76 @@ Why might you want to do this? We'll get to that later...
 
 ###### Visibility, tracking all the things
 
-The state of every task, layer, job and worker is tracked in Igor, right down to process IDs
-and memory statistics. It doesn't matter if a task has been submitted to the queue or not, 
-whether it wont run in the next 10 years, whether it is running right now, has been paused, 
-retried or errored. It's visible from the API (assuming you have the right to see it).
+To explain by a counter example: In systems where workflows are secondary concerns it may not be possible to fetch the status of tasks not yet launched. That is, often these systems are implemented so that task A fires off task B when it completes in a sort of daisy-chain approach. Such a system has no way of knowing about task B (other than that, perhaps, task A has a post-run instruction) before it completes task A. From this point, task B is created and can be looked up. 
+
+In Igor the status of the entire workflow is known from the begining - whether it has run, will run or is currently running (or even rerunning).
+
+In addition task history is recorded for debugging / auditing. This example task was queued by the system (selected to run), then skipped, retried and re-queued before being picked up by a worker & completing successfully. This isn't meant to take the place of logs, just to track what Igor has done with the task.
+```json
+[
+  {
+    "task_record_id": "6b4f4f42a4f54e50b232dc958ea1bf9a",
+    "job_id": "2355b52a-be0c-42c8-ace1-31116c6ed5be",
+    "layer_id": "ad198abe-7084-4b8a-be6a-ef85909d3fdf",
+    "task_id": "65f15314-b692-4e93-9daa-989c9f77cb75",
+    "worker_id": null,
+    "reason": "system scheduled task",
+    "state": "QUEUED",
+    "created": 1557064729
+  },
+  {
+    "task_record_id": "9c6fb6ae1a0f42688033a0cceeb76d7e5",
+    "job_id": "2355b52a-be0c-42c8-ace1-31116c6ed5be",
+    "layer_id": "ad198abe-7084-4b8a-be6a-ef85909d3fdf",
+    "task_id": "65f15314-b692-4e93-9daa-989c9f77cb75",
+    "worker_id": null,
+    "reason": "skipped by user:580fc8fe-5d36-4bdd-b461-0abc05b7b48c",
+    "state": "SKIPPED",
+    "created": 1557066676
+  },
+  {
+    "task_record_id": "8273dae74b1a4e94a7a7cef1aa3bd314",
+    "job_id": "2355b52a-be0c-42c8-ace1-31116c6ed5be",
+    "layer_id": "ad198abe-7084-4b8a-be6a-ef85909d3fdf",
+    "task_id": "65f15314-b692-4e93-9daa-989c9f77cb75",
+    "worker_id": null,
+    "reason": "retried by user:580fc8fe-5d36-4bdd-b461-0abc05b7b48c",
+    "state": "PENDING",
+    "created": 1557066679
+  },
+  {
+    "task_record_id": "c66099b698df4d45b05ce51289d6d302",
+    "job_id": "2355b52a-be0c-42c8-ace1-31116c6ed5be",
+    "layer_id": "ad198abe-7084-4b8a-be6a-ef85909d3fdf",
+    "task_id": "65f15314-b692-4e93-9daa-989c9f77cb75",
+    "worker_id": null,
+    "reason": "system scheduled task",
+    "state": "QUEUED",
+    "created": 1557066683
+  },
+  {
+    "task_record_id": "836a2fc07cf6416ba53ae92342066878",
+    "job_id": "2355b52a-be0c-42c8-ace1-31116c6ed5be",
+    "layer_id": "ad198abe-7084-4b8a-be6a-ef85909d3fdf",
+    "task_id": "65f15314-b692-4e93-9daa-989c9f77cb75",
+    "worker_id": "333f6c54-62e6-4c87-9c3a-35b25914b280",
+    "reason": "'172.18.0.5' is on the case",
+    "state": "RUNNING",
+    "created": 1557066683
+  },
+  {
+    "task_record_id": "e05c514aa95a452abc907e6a1769355f",
+    "job_id": "2355b52a-be0c-42c8-ace1-31116c6ed5be",
+    "layer_id": "ad198abe-7084-4b8a-be6a-ef85909d3fdf",
+    "task_id": "65f15314-b692-4e93-9daa-989c9f77cb75",
+    "worker_id": "333f6c54-62e6-4c87-9c3a-35b25914b280",
+    "reason": "exit_code: 0  message: ",
+    "state": "COMPLETED",
+    "created": 1557066693
+  }
+]
+```
+
 
 ###### Live modification
 
@@ -138,8 +203,8 @@ retried or errored. It's visible from the API (assuming you have the right to se
 * Task results
 
    Task results are stored alongside task objects in Igor. A simple API allows you to get or 
-   set the result of any task(s) you want. Igor doesn't try to automatically pass your task results 
-   to or from tasks, that's left for you to do if you want/need to. 
+   set the result of any task(s) you want. Igor doesn't try to automatically pass you results 
+   to or from tasks, that's left for you to do if you want/need to.
 
 * Task environment
 
@@ -218,6 +283,51 @@ For more info check out
  - /tests/example_jobs for more examples
  - /lib/pyigor for a more complete simple http client 
  - /lib/igor/api/domain contains definitions for objects accepted over transport 
+
+
+## Glossary
+
+Terms you'll see thrown about.
+
+* Pending (state)
+
+    The job/layer/task has been created, but has yet to run.
+    
+* Queued (state)
+
+    Igor has scheduled the layer/task to run.
+
+* Running (state)
+    
+    The job/layer/task is currently running.
+    
+* Completed (state)
+   
+    The job/layer/task has completed.
+    
+* Errored (state)
+    
+    The job/layer/task is errored, or contains errors. Igor will reschedule tasks that have
+    not yet been retried more than their maximum number of attempts.
+
+* Skipped (state)
+
+    A user set state that Igor regards as "completed" (ie. Igor will not run it, and will kick 
+    off following task(s)).
+
+* Paused (flag)
+    
+    Tells Igor not to schedule the paused job/layer/task. This does *not* make Igor stop a running task. 
+    If you want to pause *and* stop something running, you're after 'pause' then 'kill' ... 
+
+* Kill (action)
+
+    A killed job/layer/task is set to errored, currently running task(s) are stopped. Task(s) can be 
+    retried after being killed (but this counts against thier max attempts).
+
+* Retry (action)
+
+    A variant of kill, retry works on job/layer/task(s) that are *not* running and ignores a task(s) max attempts.
 
 
 ## Status
