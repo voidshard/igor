@@ -26,10 +26,6 @@ In short Igor is *all* about workflows, visibility, live workflow modification a
 
 If you're after realtime task execution and / or don't need workflows at all: Igor isn't for you. 
 
-##### Warning
-
-Igor is currently beta until I've had more time to comb through it. 
-There are tests but coverage isn't 100% yet.
 
 ## Building and Requirements
 
@@ -108,7 +104,7 @@ Other systems allow you to define tasks with support for chains, groups and sets
 as an afterthought. Igor is built entirely the other way around. And when I say *entirely* I 
 mean it: you can define layers *without* tasks if you so wish. 
 
-Why might want to do this? Well we'll get to that later...
+Why might you want to do this? We'll get to that later...
 
 ###### Visibility, tracking all the things
 
@@ -212,7 +208,7 @@ You must define all layers that you want upfront. Igor doesn't mind it if it goe
 a layer and finds there are no tasks. It just considers it "complete" immediately :)
 
 You can add a task to an already existing layer with 
-- POST /v1/layers/<id>/tasks
+- POST /v1/layers/[layer_id]/tasks
 ```json
 {"name": "a_new_task", "cmd": ["sleep", "10"]}
 ```
@@ -222,3 +218,14 @@ For more info check out
  - /tests/example_jobs for more examples
  - /lib/pyigor for a more complete simple http client 
  - /lib/igor/api/domain contains definitions for objects accepted over transport 
+
+
+## Status
+
+Igor is functional and reasonably tested. I'd like to add *more* tests before advising 
+folks to run it in anger, but it currently functions well enough for my own use at home.
+More tests & refinements to come as issues crop up. 
+
+Feel free to push up bugs / features.
+
+
