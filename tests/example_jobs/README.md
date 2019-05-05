@@ -24,6 +24,8 @@ Since the default transport is HTTPS, you can easily use curl to talk to an igor
 The rough format to send a json file is (assuming your user password is admin:admin):
 
 ```bash
-curl -d @/path/to/file.json -H "Content-Type: application/json" --cacert /path/to/ssl.pem -H "Authorization: Basic YWRtaW46YWRtaW4=" "https://localhost:9025/v1/[url]"
+curl -d @/path/to/file.json -H "Content-Type: application/json" \
+ --cacert /path/to/ssl.pem \
+ -H "Authorization: Basic YWRtaW46YWRtaW4=" "https://localhost:9025/v1/[url]"
 ```
 

@@ -44,24 +44,20 @@ class ProcessManager:
         self._values = {}  # process ID -> keys
         self._procs = {}  # process ID -> proc obj
 
-    def _log_output(self, task_logger, pipe_obj):
+    def _log_output(self, pipe_obj):
         """Send each line of output from the subprocess to the logger.
 
-        :param task_logger: object that accepts log messages and does something with them (or not)
         :param pipe_obj: subprocess.stdout
 
         """
-        if not task_logger:
-            return
-
         for line in iter(pipe_obj.readline, b''):
             try:
-                task_logger.log(str(line, encoding='utf8'))
+                print(str(line, encoding='utf8'))
             except Exception as e:
                 # don't stop just because we can't log a line
                 logger.warn(f"unable to log: {e}: {line}")
 
-    def run(self, keys, logger, cmd, env=None) -> (int, str, str):
+    def run(self, keys, cmd, env=None) -> (int, str, str):
         """Run the given command & block until it completes.
 
         Returns (int, str, str) representing (exit_code, exitcode, message).
@@ -79,7 +75,6 @@ class ProcessManager:
         (hopefully the exception message reveals something :P).
 
         :param keys: key(s) that should be used to reference this cmd
-        :param logger: some obj that will do something with the stdout / stderr from the process
         :param cmd: actual command to run
         :param env: env variables for the child process
         :returns: tuple
@@ -114,7 +109,7 @@ class ProcessManager:
 
             try:
                 with proc.stdout:
-                    self._log_output(logger, proc.stdout)
+                    self._log_output(proc.stdout)
 
                 exitcode = proc.wait()
 

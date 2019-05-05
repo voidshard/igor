@@ -98,49 +98,50 @@ class IgorDBService:
         :raises WorkerNotFound:
 
         """
-        wkr = self.one_worker(wkr_id)
-        tsk = self.one_task(tsk_id)
+        with self._db.transaction() as t:
+            wkr = self.one_worker(wkr_id)
+            tsk = self.one_task(tsk_id)
 
-        if tsk.worker_id and tsk.worker_id != wkr.id:
-            result = self._db.get_workers(
-                domain.Query([domain.Filter(worker_ids=[tsk.worker_id])], limit=1)
+            if tsk.worker_id and tsk.worker_id != wkr.id:
+                result = self._db.get_workers(
+                    domain.Query([domain.Filter(worker_ids=[tsk.worker_id])], limit=1)
+                )
+                if result:
+                    # the task is already being worked on
+                    raise exc.WorkerMismatch(f"mismatched worker {wkr.id} to task {tsk.id}")
+
+            # update task
+            tag = t.update_task(
+                tsk.id,
+                tsk.etag,
+                state=enums.State.RUNNING.value,
+                worker_id=wkr.id,
             )
-            if result:
-                # the task is already being worked on
-                raise exc.WorkerMismatch(f"mismatched worker {wkr.id} to task {tsk.id}")
 
-        tsk_update = {
-            "state": enums.State.RUNNING.value,
-            "worker_id": wkr.id,
-        }
-        wkr_update = {
-            'task_started': time.time(),
-            'job_id': tsk.job_id,
-            'layer_id': tsk.layer_id,
-            'task_id': tsk.id,
-        }
+            # update worker
+            t.update_worker(
+                wkr.id,
+                wkr.etag,
+                task_started=time.time(),
+                job_id=tsk.job_id,
+                layer_id=tsk.layer_id,
+                task_id=tsk.id,
+            )
 
-        # update task
-        self.update_task(
-            tsk.id,
-            tsk.etag,
-            **tsk_update
-        )
-
-        # update worker
-        self.update_worker(
-            wkr.id,
-            wkr.etag,
-            **wkr_update
-        )
+            t.create_task_record(
+                tsk, wkr.id, enums.State.RUNNING.value, reason=f"'{wkr.host}' is on the case"
+            )
+            return tag
 
     def stop_work_task(
-        self, wkr_id: str, tsk_id: str, w_state: str, reason: str="", attempts=None
+        self, wkr: str, tsk: str, w_state: str, reason: str="", attempts=None
     ):
         """Worker tells system it's stopping a task
 
-        :param wkr_id:
-        :param tsk_id:
+        - Responsible for setting a task to ERRORED or COMPLETED, called by a worker.
+
+        :param wkr:
+        :param tsk:
         :param w_state: state to set task to
         :param reason: reason for update
         :param attempts: attempts to set on task
@@ -151,41 +152,124 @@ class IgorDBService:
         :raises WorkerNotFound:
 
         """
-        wkr = self.one_worker(wkr_id)
-        tsk = self.one_task(tsk_id)
+        if w_state not in [enums.State.COMPLETED.value, enums.State.ERRORED.value]:
+            raise exc.IllegalOp(f"stop_work_task can only set to COMPLETED or ERRORED")
 
-        if tsk.worker_id and tsk.worker_id != wkr.id:
-            raise exc.WorkerMismatch(f"mismatched worker {wkr.id} to task {tsk.id}")
+        with self._db.transaction() as t:
+            wkr = self.one_worker(wkr) if isinstance(wkr, str) else wkr
+            tsk = self.one_task(tsk) if isinstance(tsk, str) else tsk
 
-        tsk_update = {
-            "state": w_state,
-            "metadata": tsk.work_record_update(
-                wkr.id, wkr.host, w_state, reason=reason
-            ),
-            "worker_id": None,
-            "attempts": attempts,
-        }
+            if tsk.worker_id and tsk.worker_id != wkr.id:
+                raise exc.WorkerMismatch(f"mismatched worker {wkr.id} to task {tsk.id}")
 
-        wkr_update = {
-            'task_finished': time.time(),
-            'job_id': None,
-            'layer_id': None,
-            'task_id': None,
-        }
+            t.update_worker(
+                wkr.id,
+                wkr.etag,
+                task_finished=time.time(),
+                job_id=None,
+                layer_id=None,
+                task_id=None,
+            )
+            tag = t.update_task(
+                tsk.id,
+                tsk.etag,
+                worker_id=None,
+                state=w_state,
+                attempts=attempts,
+            )
+            t.create_task_record(tsk, wkr.id, w_state, reason=reason)
+            return tag
 
-        # update task
-        self.update_task(
-            tsk.id,
-            tsk.etag,
-            **tsk_update
-        )
+    def mark_task_queued(self, task, worker_id, reason, q_func, attempt=None, layer=None):
+        """Fetch some task & mark it as (re)queued.
 
-        # update worker
-        self.update_worker(
-            wkr.id,
-            wkr.etag,
-            **wkr_update
-        )
+        - This can ONLY set a task to QUEUED. The other states use other functions.
+            See stop_work_task for setting COMPLETED (or ERRORED by a worker) state.
+            See start_work_task for setting RUNNING by a worker.
+            See force_task_state for settings ERRORED / SKIPPED outside of a worker
+
+        In order to make as sure as possible that our dual write system is in sync (which
+        matters mostly if we think a task is queued but it's not) we only queue up tasks in the
+        runner as part of a transaction. This can still have problems, but it's safer than
+        not ..
+
+        :param task: task id or task obj
+        :param worker_id:
+        :param reason:
+        :param q_func: function to queue up task in runner
+        :param attempt: supply attempt number
+        :param layer:
+
+        """
+        with self._db.transaction() as t:
+            tsk = self.one_task(task) if isinstance(task, str) else task
+            lyr = layer if isinstance(layer, domain.Layer) else self.one_layer(tsk.layer_id)
+
+            t.create_task_record(
+                tsk,
+                worker_id,
+                enums.State.QUEUED.value,
+                reason=reason
+            )
+            t.update_task(
+                tsk.id,
+                tsk.etag,
+                state=enums.State.QUEUED.value,
+                worker_id=None,
+                attempts=attempt or tsk.attempts,
+            )
+
+            if lyr.state != enums.State.RUNNING.value:
+                t.update_layer(lyr.id, None, state=enums.State.RUNNING.value)
+
+            q_func(lyr, tsk)
+
+            return lyr, tsk
+
+    def force_task_state(
+        self, task, worker_id, attempts, reason, final_state=enums.State.ERRORED.value
+    ):
+        """Fetch some task & mark it as
+          - ERRORED
+          - PENDING
+          - SKIPPED
+
+        See mark_task_queued for setting the QUEUED state.
+        See stop_work_task for setting COMPLETED (or ERRORED by a worker) state.
+        See start_work_task for setting RUNNING by a worker.
+
+        :param task: task in question
+        :param worker_id: worker reporting this
+        :param attempts: number of attempts to mark down
+        :param reason: some error message
+        :param final_state: some error message
+
+        """
+        if final_state not in [
+            enums.State.ERRORED.value,
+            enums.State.SKIPPED.value,
+            enums.State.PENDING.value,
+        ]:
+            raise exc.IllegalOp(
+                "force_task_state can only set task to ERRORED, PENDING or SKIPPED"
+            )
+
+        with self._db.transaction() as t:
+            tsk = self.one_task(task) if isinstance(task, str) else task
+
+            t.create_task_record(
+                tsk,
+                worker_id,
+                final_state,
+                reason=reason
+            )
+            return t.update_task(
+                tsk.id,
+                tsk.etag,
+                state=final_state,
+                worker_id=None,
+                attempts=attempts,
+            )
 
     def update_job(
         self,
@@ -265,6 +349,7 @@ class IgorDBService:
         result=None,
         state=None,
         attempts=None,
+        env=None,
         **kwargs
     ):
         """Update given task with various settings.
@@ -277,6 +362,7 @@ class IgorDBService:
         :param result:
         :param state:
         :param attempts:
+        :param env:
         :param paused:
 
         """
@@ -284,6 +370,7 @@ class IgorDBService:
             "state": state,
             "metadata": metadata,
             "result": result,
+            "env": env,
             "attempts": attempts,
         }
 

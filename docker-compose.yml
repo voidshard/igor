@@ -50,7 +50,7 @@ networks:
 services:
   # --- required data services ---
   queue:
-    image: redis
+    image: redis:latest # must be v5+
     ports:
       - 6379:6379
     volumes:

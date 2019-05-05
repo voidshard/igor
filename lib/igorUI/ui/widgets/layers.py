@@ -10,8 +10,8 @@ from igorUI.ui.widgets.widget import (
 from igorUI.ui.manifest import QVBoxLayout, Qt, QMenu, QIcon
 from igorUI.ui import resources
 from igorUI.ui.events import Events
-from igorUI import client
-from igorUI.client import enums
+from igorUI import service
+from igorUI.service import enums
 
 
 class LayerPanel(ClosablePanel):
@@ -81,11 +81,43 @@ class _LayerWidget(PanelWidget):
             self.__pause_selected
         )
         menu.addAction(
+            QIcon(resources.get("retry.png")),
+            "Retry",
+            self.__retry_selected
+        )
+        menu.addAction(
+            QIcon(resources.get("skip.png")),
+            "Skip",
+            self.__skip_selected
+        )
+        menu.addAction(
             QIcon(resources.get("kill.png")),
             "Kill",
             self.__kill_selected
         )
         menu.exec_(self.mapToGlobal(pos))
+
+    def __skip_selected(self):
+        """
+
+        """
+        for o in self.get_selected():
+            try:
+                service.Service.skip_layer(o.id, o.etag)
+            except Exception as e:
+                Events.Status.emit(f"error skipping layer {o.id}: {e}")
+        self.__refresh()
+
+    def __retry_selected(self):
+        """
+
+        """
+        for o in self.get_selected():
+            try:
+                service.Service.retry_layer(o.id, o.etag)
+            except Exception as e:
+                Events.Status.emit(f"error retrying layer {o.id}: {e}")
+        self.__refresh()
 
     def __pause_selected(self):
         """
@@ -93,7 +125,7 @@ class _LayerWidget(PanelWidget):
         """
         for o in self.get_selected():
             try:
-                client.Service.pause_layer(o.id, o.etag)
+                service.Service.pause_layer(o.id, o.etag)
             except Exception as e:
                 Events.Status.emit(f"error pausing layer {o.id}: {e}")
         self.__refresh()
@@ -104,7 +136,7 @@ class _LayerWidget(PanelWidget):
         """
         for o in self.get_selected():
             try:
-                client.Service.kill_layer(o.id, o.etag)
+                service.Service.kill_layer(o.id, o.etag)
             except Exception as e:
                 Events.Status.emit(f"error killing layer {o.id}: {e}")
         self.__refresh()
@@ -125,6 +157,7 @@ class _LayerWidget(PanelWidget):
         Args:
             index (QIndex):
         """
+        self.__itemClicked(index)
         obj = index.data(self._model.ObjectRole)
         Events.OpenDetails.emit("layer", obj.id)
 
@@ -134,7 +167,7 @@ class _LayerModel(AbstractEditableTableModel):
     HEADERS = ["Name", "LayerId", "State", "Paused", "UserId", "Order", "Priority"]
 
     DISPLAY_CALLBACKS = {
-        0: lambda n: n.key,
+        0: lambda n: n.name,
         1: lambda n: n.id,
         2: lambda n: n.state,
         3: lambda n: n.paused,
@@ -178,7 +211,7 @@ class _LayerModel(AbstractEditableTableModel):
             return []
 
         try:
-            for i in client.Service.get_layers(
+            for i in service.Service.get_layers(
                 job_ids=[self._current_job],
                 states=enums.ALL,
             ):

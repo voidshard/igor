@@ -9,42 +9,6 @@ from igor import enums
 
 class TestTask:
 
-    def test_work_record_update(self, monkeypatch):
-        # arrange
-        t = domain.Task()
-        t.metadata["records"] = [{"foo": "bar"}]
-
-        worker_id = str(uuid.uuid4())
-        worker_host = "12.123.73.1"
-        task_state = "OFOBAW"
-        reason = "cause i said so thats why"
-
-        def time_now():
-            return 123891231.12
-
-        expect = copy.copy(t.metadata)
-        expect["records"].append({
-            "worker": worker_id,
-            "host": worker_host,
-            "time": time_now(),
-            "state": task_state,
-            "reason": reason,
-        })
-
-        monkeypatch.setattr("igor.domain.task.time.time", time_now)
-
-        # act
-        new_meta = t.work_record_update(
-            worker_id,
-            worker_host,
-            task_state,
-            reason=reason,
-        )
-
-        # assert
-        assert new_meta == expect
-        assert t.metadata == expect
-
     def test_new(self):
         # arrange
         type_ = enums.TaskType.CMD.value
@@ -82,6 +46,7 @@ class TestTask:
             "paused": int(time.time()),
             "layer_id": str(uuid.uuid4()),
             "result": str(uuid.uuid4()),
+            "records": [],
             "key": str(uuid.uuid4()),
             "state": "FUBAR",
             "etag": str(uuid.uuid4()),

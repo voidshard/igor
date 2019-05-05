@@ -18,6 +18,7 @@ from PyQt5.QtCore import (
 from PyQt5.QtCore import pyqtSignal as Signal
 from PyQt5.QtWidgets import (
     QWidget,
+    QComboBox,
     QFileDialog,
     QTextEdit,
     QLineEdit,
@@ -35,6 +36,8 @@ from PyQt5.QtWidgets import (
     QGridLayout,
     QTableView,
     QCheckBox,
+    QDialog,
+    QPushButton,
 )
 from PyQt5.QtGui import (
     QKeySequence,
@@ -46,6 +49,9 @@ from PyQt5.QtGui import (
 
 
 __all__ = [
+    "QComboBox",
+    "QDialog",
+    "QPushButton",
     "QMenu",
     "QModelIndex",
     "QAbstractTableModel",

@@ -1,13 +1,10 @@
-from igorUI import config
-
-from pyigor.http import IgorClient
+from pyigor.transport.http import IgorClient
 from pyigor import enums
 
 
-class _Service:
-    def __init__(self):
-        _cfg = config.read_default_config()
-        self._service = IgorClient(**_cfg.get("client", {}))
+class Service:
+    def __init__(self, **kwargs):
+        self._service = IgorClient(**kwargs)
 
     def pause_job(self, id_: str, tag: str):
         """
@@ -94,6 +91,33 @@ class _Service:
         """
         return self._service.kill_task(id_, tag)
 
+    def skip_job(self, id_: str, tag: str):
+        """
+
+        :param id_:
+        :param tag:
+
+        """
+        return self._service.skip_job(id_, tag)
+
+    def skip_layer(self, id_: str, tag: str):
+        """
+
+        :param id_:
+        :param tag:
+
+        """
+        return self._service.skip_layer(id_, tag)
+
+    def skip_task(self, id_: str, tag: str):
+        """
+
+        :param id_:
+        :param tag:
+
+        """
+        return self._service.skip_task(id_, tag)
+
     def get_jobs(self, **kwargs) -> list:
         """
 
@@ -148,7 +172,3 @@ class _Service:
 
     def one_worker(self, id_: str):
         return self._one_or_none(self.get_workers(worker_ids=[id_]))
-
-
-enums = enums
-Service = _Service()

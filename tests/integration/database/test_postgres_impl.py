@@ -5,7 +5,7 @@ import uuid
 from igor import domain
 from igor import enums
 from igor import exceptions as exc
-from igor.database.postgres_impl import PostgresDB
+from igor.database.postgres_impl import PostgresDB, _Transaction
 
 from integration import utils
 
@@ -338,7 +338,10 @@ class DatabaseTest:
 
         # assert
         assert task.id == t.id
-        assert task.result == expect
+        if expect is None:
+            assert task.result is None
+        else:
+            assert task.result == str(expect, encoding='utf8')
 
     def test_update_task_result_raises_on_invalid_type(self):
         # arrange
@@ -656,6 +659,7 @@ class TestPostgres(DatabaseTest):
     @classmethod
     def teardown_class(cls):
         cls.db_container.stop()
+        time.sleep(3)  # wait for db to shutdown
 
     @classmethod
     def clear_db(cls):
@@ -666,18 +670,19 @@ class TestPostgres(DatabaseTest):
 
         # update this table to remove any FK problems
         cur.execute((
-            f"UPDATE {PostgresDB._T_WKR} "
+            f"UPDATE {_Transaction._T_WKR} "
             f"SET str_task_id=null, "
             f"str_layer_id=null, "
             f"str_job_id=null;"
         ))
 
         for table in [  # remove all data, order matters
-            PostgresDB._T_WKR,
-            PostgresDB._T_TSK,
-            PostgresDB._T_LYR,
-            PostgresDB._T_JOB,
-            PostgresDB._T_USR,
+            _Transaction._T_REC,
+            _Transaction._T_WKR,
+            _Transaction._T_TSK,
+            _Transaction._T_LYR,
+            _Transaction._T_JOB,
+            _Transaction._T_USR,
         ]:
             cur.execute(f"DELETE FROM {table};")
 

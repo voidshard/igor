@@ -55,7 +55,8 @@ CREATE TABLE jobs(
 	time_updated BIGINT NOT NULL DEFAULT currentTimeSeconds(),
 	json_metadata JSONB NOT NULL DEFAULT '{}',
 	time_paused BIGINT,
-	str_key TEXT) WITH (OIDS = false);
+	str_key TEXT,
+UNIQUE (str_user_id, str_key)) WITH (OIDS = false);
 
 
 ---
@@ -77,7 +78,8 @@ CREATE TABLE layers(
 	json_parents JSONB NOT NULL DEFAULT '[]',
 	json_siblings JSONB NOT NULL DEFAULT '[]',
 	json_children JSONB NOT NULL DEFAULT '[]',
-	str_key TEXT) WITH (OIDS = false);
+	str_key TEXT,
+UNIQUE (str_job_id, str_key)) WITH (OIDS = false);
 
 
 ---
@@ -120,13 +122,26 @@ CREATE TABLE tasks(
 	json_env JSONB NOT NULL DEFAULT '{}',
 	bytea_result BYTEA,
 	int_attempts INT NOT NULL DEFAULT 0,
-	int_max_attempts INT NOT NULL DEFAULT 3) WITH (OIDS = false);
+	int_max_attempts INT NOT NULL DEFAULT 3,
+UNIQUE (str_layer_id, str_key)) WITH (OIDS = false);
 
 ---
 --- now we need to add one more constraint ...
 ---
 ALTER TABLE workers ADD CONSTRAINT tasks_str_task_id_fk FOREIGN KEY (str_task_id) REFERENCES tasks(str_task_id);
 
+---
+--- task records
+---
+CREATE TABLE task_records (
+	str_task_record_id TEXT PRIMARY KEY,
+	str_job_id TEXT NOT NULL,
+	str_layer_id TEXT NOT NULL,
+	str_task_id TEXT NOT NULL,
+	str_worker_id TEXT,
+	str_reason TEXT,
+	enum_state STATE NOT NULL,
+	time_created BIGINT NOT NULL DEFAULT currentTimeSeconds()) WITH (OIDS = false);
 
 ---
 --- Finally, create some indexes
@@ -150,6 +165,10 @@ CREATE INDEX tasks_str_task_id ON tasks(str_task_id);
 CREATE INDEX tasks_str_user_id ON tasks(str_user_id);
 CREATE INDEX tasks_enum_state ON tasks(enum_state);
 CREATE INDEX tasks_str_key ON tasks(str_key);
+
+CREATE INDEX task_records_str_job_id ON task_records(str_job_id);
+CREATE INDEX task_records_str_layer_id ON task_records(str_layer_id);
+CREATE INDEX task_records_str_task_id ON task_records(str_task_id);
 
 CREATE INDEX workers_str_job_id ON workers(str_job_id);
 CREATE INDEX workers_str_layer_id ON workers(str_layer_id);

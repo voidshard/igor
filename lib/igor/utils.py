@@ -12,6 +12,7 @@ _LIST_ADJ = [
     "speedy",
     "immense",
     "teeny",
+    "tawny",
     "malicious",
     "angelic",
     "prancing",

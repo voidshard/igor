@@ -9,8 +9,8 @@ from igorUI.ui.widgets.widget import (
 )
 from igorUI.ui.manifest import QVBoxLayout, Qt, QMenu, QIcon
 from igorUI.ui import resources
-from igorUI import client
-from igorUI.client import enums
+from igorUI import service
+from igorUI.service import enums
 from igorUI.ui.events import Events
 
 
@@ -87,6 +87,7 @@ class _TaskWidget(PanelWidget):
         Args:
             index (QIndex):
         """
+        self.__itemClicked(index)
         obj = index.data(self._model.ObjectRole)
         Events.OpenDetails.emit("task", obj.id)
 
@@ -104,6 +105,11 @@ class _TaskWidget(PanelWidget):
             self.__retry_selected
         )
         menu.addAction(
+            QIcon(resources.get("skip.png")),
+            "Skip",
+            self.__skip_selected
+        )
+        menu.addAction(
             QIcon(resources.get("kill.png")),
             "Kill",
             self.__kill_selected
@@ -116,9 +122,20 @@ class _TaskWidget(PanelWidget):
         """
         for o in self.get_selected():
             try:
-                client.Service.pause_task(o.id, o.etag)
+                service.Service.pause_task(o.id, o.etag)
             except Exception as e:
                 Events.Status.emit(f"error pausing task {o.id}: {e}")
+        self.__refresh()
+
+    def __skip_selected(self):
+        """
+
+        """
+        for o in self.get_selected():
+            try:
+                service.Service.skip_task(o.id, o.etag)
+            except Exception as e:
+                Events.Status.emit(f"error skipping task {o.id}: {e}")
         self.__refresh()
 
     def __retry_selected(self):
@@ -127,7 +144,7 @@ class _TaskWidget(PanelWidget):
         """
         for o in self.get_selected():
             try:
-                client.Service.retry_task(o.id, o.etag)
+                service.Service.retry_task(o.id, o.etag)
             except Exception as e:
                 Events.Status.emit(f"error retrying task {o.id}: {e}")
         self.__refresh()
@@ -138,7 +155,7 @@ class _TaskWidget(PanelWidget):
         """
         for o in self.get_selected():
             try:
-                client.Service.kill_task(o.id, o.etag)
+                service.Service.kill_task(o.id, o.etag)
             except Exception as e:
                 Events.Status.emit(f"error killing task {o.id}: {e}")
         self.__refresh()
@@ -149,7 +166,7 @@ class _TaskModel(AbstractEditableTableModel):
     HEADERS = ["Name", "TaskId", "State", "Paused", "UserId", "Cmd", "Attempts"]
 
     DISPLAY_CALLBACKS = {
-        0: lambda n: n.key,
+        0: lambda n: n.name,
         1: lambda n: n.id,
         2: lambda n: n.state,
         3: lambda n: n.paused,
@@ -193,7 +210,7 @@ class _TaskModel(AbstractEditableTableModel):
             return []
 
         try:
-            for i in client.Service.get_tasks(
+            for i in service.Service.get_tasks(
                 layer_ids=[self._current_layer],
                 states=enums.ALL,
             ):

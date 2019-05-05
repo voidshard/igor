@@ -23,12 +23,10 @@ class IgorGateway:
 
     """
 
-    _default_states = [
-        enums.State.PENDING,
-        enums.State.QUEUED,
-        enums.State.RUNNING,
-        enums.State.ERRORED,
-        enums.State.SKIPPED,
+    _INVALID_RETRY_STATES = [
+        enums.State.PENDING.value,
+        enums.State.QUEUED.value,
+        enums.State.RUNNING.value,
     ]
 
     def __init__(self, service, runner):
@@ -67,7 +65,7 @@ class IgorGateway:
         return obj
 
     def set_task_result(self, req: domain.User, etag, task_id, result):
-        """
+        """Set the result attribute of a Task obj.
 
         :param req:
         :param etag:
@@ -76,11 +74,10 @@ class IgorGateway:
         :return: str
 
         """
-        etag, _ = self._apply_task_update(req, etag, task_id, result=result)
-        return etag
+        return self._apply_task_update(req, etag, task_id, result=result)
 
     def set_task_env(self, req: domain.User, etag, task_id, env):
-        """
+        """Set the env attribute of a Task obj.
 
         :param req:
         :param etag:
@@ -92,8 +89,9 @@ class IgorGateway:
         if not isinstance(env, dict):
             raise exc.InvalidSpec(f"task env must be dict type, got {env}")
 
-        etag, _ = self._apply_task_update(req, etag, task_id, env={str(k): str(v) for k, v in env})
-        return etag
+        return self._apply_task_update(
+            req, etag, task_id, env={str(k): str(v) for k, v in env.items()}
+        )
 
     def _apply_task_update(self, req: domain.User, etag, task_id, **update):
         """Apply some update to a task & return the new etag & task obj
@@ -115,43 +113,17 @@ class IgorGateway:
         if obj.user_id != req.id and not req.is_admin:
             raise exc.Forbidden(f"user {req.id} may not update object {task_id}")
 
-        return self._svc.update_task(obj.id, etag, **update), obj
-
-    def retry_task(self, req: domain.User, etag, task_id):
-        """Retry a single task & return it's update etag.
-
-        - sets task to pending, allowing it to be queued
-        - sets parent layer to queued so the task can be kicked off again
-
-        :param req:
-        :param etag:
-        :param task_id:
-        :return: str
-
-        """
-        new_tag, task = self._apply_task_update(
-            req,
-            etag,
-            task_id,
-            state=enums.State.PENDING.value,
-        )
-        self._rnr.send_kill(
-            task_id=task_id
-        )
-
-        parent = self._svc.one_layer(task.layer_id)
-        if parent.state not in [enums.State.QUEUED.value, enums.State.RUNNING.value]:
-            self._svc.update_layer(
-                parent.id,
-                parent.etag,
-                state=enums.State.QUEUED.value,
-            )
-
-        return new_tag
+        return {task_id: self._svc.update_task(obj.id, etag, **update)}
 
     def perform_pause(self, req: domain.User, etag, job_id=None, layer_id=None, task_id=None):
-        """A kill order makes currently running matching tasks die, and
-        allows them to retry normally.
+        """A pause order sets the paused state on given tasks.
+
+        "Pause" means that the task is *not* (re)scheduled by the system. It does *not* stop
+        currently running tasks.
+
+        Ie. a running task "foo" that is paused is not stopped. It is marked paused so that
+        it will not be launched (if not already running) and/or will not be re-launched in the
+        event that it fails.
 
         One of job_id, layer_id, task_id must be given for this to do anything.
 
@@ -188,15 +160,16 @@ class IgorGateway:
         logger.info(f"performing pause toggle: requester:{req.id} object:{obj_id}")
 
         if obj.paused:
-            return update_one(obj.id, etag, paused=None)
+            return {obj.id: update_one(obj.id, etag, paused=None)}
         else:
-            return update_one(obj.id, etag, paused=time.time())
+            return {obj.id: update_one(obj.id, etag, paused=time.time())}
 
-    def perform_kill(self, req: domain.User, etag, job_id=None, layer_id=None, task_id=None):
-        """A kill order makes currently running matching tasks die, and
-        allows them to retry normally.
+    def perform_skip(self, req: domain.User, etag, job_id=None, layer_id=None, task_id=None):
+        """A skip order makes currently running matching tasks 'skip'.
 
         One of job_id, layer_id, task_id must be given for this to do anything.
+
+        Skip is basically an end state that the system essentially does nothing with.
 
         :param req: requesting user
         :param etag:
@@ -218,31 +191,222 @@ class IgorGateway:
             ]
         )
 
-        kill_meta = {
-            "killed_at": time.time(),
-            "killed_by": req.id,
-        }
+        updated = {}
+        for t in self._svc.get_tasks(query):
+            if t.user_id != req.id and not req.is_admin:
+                raise exc.Forbidden(f"user {req.id} may not skip task {t.id}")
+
+            if t.worker_id:
+                logger.info(f"skipping task: requester:{req.id} task:{t.id} worker:{t.worker_id}")
+                self._rnr.send_kill(task_id=t.id, worker_id=t.worker_id)
+            else:
+                logger.info(f"skipping task: requester:{req.id} task:{t.id}")
+
+            tag = self._svc.force_task_state(
+               t,
+               None,
+               attempts=t.attempts + 1,
+               reason=f"skipped by user:{req.id}",
+               final_state=enums.State.SKIPPED.value,
+            )
+            updated[t.id] = tag
+        return updated
+
+    def perform_retry(self, req: domain.User, etag, job_id=None, layer_id=None, task_id=None):
+        """Perform a retry on a job, layer or task.
+
+        Retry sets the matching Tasks & Layer to PENDING, matching Jobs to RUNNING.
+
+        One of the three must be given ..
+
+        :param req:
+        :param etag:
+        :param job_id:
+        :param layer_id:
+        :param task_id:
+
+        """
+        if not etag:
+            raise exc.WriteConflict(f"no etag given")
+
+        if job_id:
+            job, tasks_updated = self._retry_job(req, etag, job_id)
+            return tasks_updated
+
+        elif layer_id:
+            layer, tasks_updated = self._retry_layer(req, etag, layer_id)
+            self._svc.update_job(layer.job_id, None, state=enums.State.RUNNING.value)
+            return tasks_updated
+
+        elif task_id:
+            task = self._retry_task(req, etag, task_id)
+            self._svc.update_job(task.job_id, None, state=enums.State.RUNNING.value)
+            self._svc.update_layer(task.layer_id, None, state=enums.State.PENDING.value)
+            return {task.id: task.etag}
+
+    def _retry_job(self, req: domain.User, etag, job_id):
+        """Retry all COMPLETED, ERRORED and SKIPPED tasks of a Job.
+
+        - Job set to RUNNING
+        - Layers are returned to PENDING
+        - Tasks are returned to PENDING
+
+        :param req:
+        :param etag:
+        :param job_id:
+
+        """
+        job = self._svc.one_job(job_id)
+        if job.user_id != req.id and not req.is_admin:
+            raise exc.Forbidden(f"user {req.id} may not retry job {job.id}")
+
+        if job.state in self._INVALID_RETRY_STATES:
+            raise exc.InvalidState("cannot retry job in current state")
+
+        if job.etag != etag:
+            raise exc.WriteConflict(f"etag mismatch")
+
+        query = domain.Query(filters=[
+            domain.Filter(
+                job_ids=[job_id],
+                states=[
+                    enums.State.ERRORED.value,
+                    enums.State.COMPLETED.value,
+                    enums.State.SKIPPED.value,
+                ]),
+            ]
+        )
+        layers = self._svc.get_layers(query)
+
+        updated = {}
+
+        for layer in layers:
+            _, tasks_retried = self._retry_layer(req, layer.etag, layer.id)
+            updated.update(tasks_retried)
+
+        tag = self._svc.update_job(job.id, job.etag, state=enums.State.RUNNING.value)
+        job.etag = tag
+        return job, updated
+
+    def _retry_layer(self, req: domain.User, etag, layer):
+        """Retry all COMPLETED, ERRORED and SKIPPED tasks of a Layer.
+
+        - Job set to RUNNING
+        - Layer is returned to PENDING
+        - Tasks are returned to PENDING
+
+        :param req:
+        :param etag:
+        :param layer:
+
+        """
+        layer = self._svc.one_layer(layer) if isinstance(layer, str) else layer
+
+        if layer.user_id != req.id and not req.is_admin:
+            raise exc.Forbidden(f"user {req.id} may not retry layer {layer.id}")
+
+        if layer.state in self._INVALID_RETRY_STATES:
+            raise exc.InvalidState("cannot retry layer in current state")
+
+        if layer.etag != etag:
+            raise exc.WriteConflict(f"etag mismatch")
+
+        query = domain.Query(filters=[domain.Filter(layer_ids=[layer.id])])
+        tasks = self._svc.get_tasks(query)
+
+        updated = {}
+
+        for task in tasks:
+            try:
+                t = self._retry_task(req, task.etag, task)
+                updated[t.id] = t.etag
+            except exc.InvalidState:
+                continue
+
+        tag = self._svc.update_layer(layer.id, etag, state=enums.State.PENDING.value)
+        layer.etag = tag
+        return layer, updated
+
+    def _retry_task(self, req: domain.User, etag, task):
+        """Retry a task by returning it to the PENDING state.
+
+        :param req:
+        :param task:
+
+        """
+        task = self._svc.one_task(task) if isinstance(task, str) else task
+
+        if task.user_id != req.id and not req.is_admin:
+            raise exc.Forbidden(f"user {req.id} may not retry task {task.id}")
+
+        if task.state in self._INVALID_RETRY_STATES:
+            raise exc.InvalidState("cannot retry task in current state")
+
+        if task.etag != etag:
+            raise exc.WriteConflict(f"etag mismatch")
+
+        tag = self._svc.force_task_state(
+            task,
+            None,
+            task.attempts + 1,
+            f"retried by user:{req.id}",
+            final_state=enums.State.PENDING.value
+        )
+        task.etag = tag
+        return task
+
+    def perform_kill(self, req: domain.User, etag, job_id=None, layer_id=None, task_id=None):
+        """A kill order makes currently running matching tasks die, and allows them to retry
+        normally.
+
+        One of job_id, layer_id, task_id must be given for this to do anything.
+
+        :param req: requesting user
+        :param etag:
+        :param job_id:
+        :param layer_id:
+        :param task_id:
+        :return dict:
+        :raises Forbidden:
+
+        """
+        if not etag:
+            raise exc.WriteConflict(f"no etag given")
+
+        if not any([job_id, layer_id, task_id]):
+            return
+
+        query = domain.Query(
+            filters=[
+                domain.Filter(job_ids=[job_id], layer_ids=[layer_id], task_ids=[task_id])
+            ]
+        )
+
+        workers = {w.task_id: w for w in self._svc.get_workers(query)}
+        updated = {}
 
         for t in self._svc.get_tasks(query):
             if t.user_id != req.id and not req.is_admin:
                 raise exc.Forbidden(f"user {req.id} may not kill task {t.id}")
 
-            meta = t.metadata
-            meta.update(kill_meta)
+            worker = workers.get(t.id)
+            if not worker:
+                logger.info(f"cannot kill task, not running: requester:{req.id} task:{t.id}")
+                continue
 
-            logger.info(f"killing task: requester:{req.id} task_id:{t.id}")
+            logger.info(f"killing task: requester:{req.id} task:{t.id} worker:{worker.id}")
 
-            self._svc.update_task(
-                t.id,
-                etag,
-                state=enums.State.ERRORED.value,
-                worker_id=None,
-                meta=meta,
+            self._rnr.send_kill(task_id=t.id, worker_id=worker.id)
+            tag = self._svc.stop_work_task(
+                worker,
+                t,
+                enums.State.ERRORED.value,
+                reason=f"killed by user:{req.id}",
                 attempts=t.attempts + 1,
             )
-            self._rnr.send_kill(
-                task_id=t.id
-            )
+            updated[t.id] = tag
+
+        return updated
 
     @classmethod
     def _build_query(cls, qspec: spec.QuerySpec) -> domain.Query:
@@ -254,7 +418,6 @@ class IgorGateway:
         """
         q = domain.Query()
 
-        q.user_id = qspec.user_id
         q.limit = qspec.limit
         q.offset = qspec.offset
         q.filters = []
@@ -265,11 +428,9 @@ class IgorGateway:
             f.keys = fspec.keys
             f.job_ids = fspec.job_ids
             f.layer_ids = fspec.layer_ids
+            f.worker_ids = fspec.worker_ids
             f.task_ids = fspec.task_ids
             f.states = fspec.states
-
-            if not f.states:
-                f.states = cls._default_states
 
             q.filters.append(f)
 
@@ -286,11 +447,10 @@ class IgorGateway:
 
         """
         query = self._build_query(qspec)
-
         if not req.is_admin:  # non admins can only search for their own stuff.
             query.user_id = req.id
 
-        logger.info(f"fetch jobs: requester:{req.id}")
+        logger.info(f"fetch jobs: requester:{req.id} admin:{req.is_admin}")
         return self._svc.get_jobs(query)
 
     def get_layers(self, req: domain.User, qspec: spec.QuerySpec) -> list:
@@ -308,7 +468,7 @@ class IgorGateway:
         if not req.is_admin:  # non admins can only search for their own stuff.
             query.user_id = req.id
 
-        logger.info(f"fetch layers: requester:{req.id}")
+        logger.info(f"fetch layers: requester:{req.id} admin:{req.is_admin}")
         return self._svc.get_layers(query)
 
     def get_tasks(self, req: domain.User, qspec: spec.QuerySpec) -> list:
@@ -326,7 +486,7 @@ class IgorGateway:
         if not req.is_admin:  # non admins can only search for their own stuff.
             query.user_id = req.id
 
-        logger.info(f"fetch tasks: requester:{req.id}")
+        logger.info(f"fetch tasks: requester:{req.id} admin:{req.is_admin}")
         return self._svc.get_tasks(query)
 
     def get_workers(self, req: domain.User, qspec: spec.QuerySpec) -> list:
@@ -359,6 +519,7 @@ class IgorGateway:
         layer = domain.Layer(key=layer_spec.name)
 
         layer.job_id = job_id
+        layer.key = layer_spec.name
         layer.user_id = user_id
         layer.order = layer_spec.order
         layer.priority = layer_spec.priority
@@ -432,16 +593,18 @@ class IgorGateway:
 
         mod.job_id = layer.job_id
         mod.layer_id = layer.id
+        mod.key = task.name
         mod.user_id = layer.user_id
         mod.cmd = task.cmd
         mod.env = task.env
-        mod.metadata = {"max_attempts": task.max_attempts}
+        mod.max_attempts = task.max_attempts
+        mod.metadata = {}
         if task.paused:
             mod.paused = time.time()
 
         return mod
 
-    def create_task(self, req: domain.User, layer_id: str, task: spec.TaskSpec) -> (str, str):
+    def create_task(self, req: domain.User, layer_id: str, task: spec.TaskSpec) -> dict:
         """Create a task for an existing layer.
 
         The layer must be PENDING.
@@ -451,7 +614,7 @@ class IgorGateway:
         :param req: user making request
         :param layer_id:
         :param task:
-        :return: str, str
+        :return: dict
         :raises Forbidden:
         :raises InvalidState: if layer is not pending
 
@@ -468,18 +631,18 @@ class IgorGateway:
 
         self._svc.create_tasks(layer_id, [t])
 
-        logger.info("task created: requester:{req.id} task_id:{t.id}")
+        logger.info(f"task created: requester:{req.id} task_id:{t.id}")
 
-        return t.id, t.etag
+        return {t.id: t.etag}
 
-    def create_job(self, req: domain.User, job: spec.JobSpec) -> (str, str):
+    def create_job(self, req: domain.User, job: spec.JobSpec) -> dict:
         """Create job given spec with layers & tasks.
 
         Returns id and etag of created job.
 
         :param req: requester
         :param job:
-        :return: str, str
+        :return: dict
 
         """
         if not job.user_id:
@@ -491,8 +654,8 @@ class IgorGateway:
         mod = domain.Job(key=job.name)
 
         mod.user_id = job.user_id
+        mod.key = job.name
         meta = self._start_meta(req)
-        meta["logger"] = job.logger
         mod.metadata = meta
         if job.paused:
             mod.paused = time.time()
@@ -506,9 +669,9 @@ class IgorGateway:
         logger.info(
             f"job created: requester:{req.id} layers:{n_layers} tasks:{n_tasks} job_id:{mod.id}"
         )
-        return mod.id, mod.etag
+        return {mod.id: mod.etag}
 
-    def create_user(self, req: domain.User, user: spec.UserSpec) -> (str, str):
+    def create_user(self, req: domain.User, user: spec.UserSpec) -> dict:
         """Create a new user.
 
         Nb. only admins may use this.
@@ -517,7 +680,7 @@ class IgorGateway:
 
         :param req:
         :param user:
-        :return: str, str
+        :return: dict
         :raises Forbidden:
 
         """
@@ -532,7 +695,7 @@ class IgorGateway:
 
         logger.info(f"created user: requester:{req.id} user_id:{user.id}")
 
-        return mod.id, mod.etag
+        return {mod.id: mod.etag}
 
     def one_job(self, req: domain.User, id_: str) -> domain.Job:
         """Return one job by id or raise.
@@ -546,7 +709,7 @@ class IgorGateway:
         obj = self._svc.one_job(id_)
         if req.id != obj.user_id and not req.is_admin:
             raise exc.Forbidden(f"user {req.id} cannot view {id_}")
-        logger.info("job fetch: requester:{req.id} job_id:{id_}")
+        logger.info(f"job fetch: requester:{req.id} job_id:{id_}")
         return obj
 
     def one_layer(self, req: domain.User, id_: str) -> domain.Layer:
@@ -561,7 +724,7 @@ class IgorGateway:
         obj = self._svc.one_layer(id_)
         if req.id != obj.user_id and not req.is_admin:
             raise exc.Forbidden(f"user {req.id} cannot view {id_}")
-        logger.info("layer fetch: requester:{req.id} layer_id:{id_}")
+        logger.info(f"layer fetch: requester:{req.id} layer_id:{id_}")
         return obj
 
     def one_task(self, req: domain.User, id_: str) -> domain.Task:
@@ -575,7 +738,7 @@ class IgorGateway:
         obj = self._svc.one_task(id_)
         if req.id != obj.user_id and not req.is_admin:
             raise exc.Forbidden(f"user {req.id} cannot view {id_}")
-        logger.info("task fetch: requester:{req.id} task_id:{id_}")
+        logger.info(f"task fetch: requester:{req.id} task_id:{id_}")
         return obj
 
     def one_worker(self, req: domain.User, id_: str):
@@ -588,5 +751,5 @@ class IgorGateway:
         """
         if not req.is_admin:
             raise exc.Forbidden(f"user {req.id} may not view workers")
-        logger.info("worker fetch: requester:{req.id} worker_id:{id_}")
+        logger.info(f"worker fetch: requester:{req.id} worker_id:{id_}")
         return self._svc.one_worker(id_)

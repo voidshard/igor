@@ -44,9 +44,6 @@ If you're planning on running the test suite you'll need docker too. Docker & do
 
 ## Concepts
 
-Here are the terms and design goals of Igor. There are many ways of building such a system and
-each has their own good and bad points. 
-
 ###### Terminology
 
 Some terminology to get us started!
@@ -59,7 +56,7 @@ First class lives-in-the-database honest-to-goodness objects:
 
 * Layer
     
-    A Layer is a collection of tasks that belongs to a Job.
+    A Layer is a collection of tasks that belong to a Job.
     Layers have an 'order' value and are formed into a tree when a Job is 
     created. That is, layers with the same 'order' run at the same time, and higher ordered
     layers run only after previous layers have completed or are explicitly skipped (by a human).
@@ -69,8 +66,8 @@ First class lives-in-the-database honest-to-goodness objects:
     A task is a single OS command to be run, and belongs to a layer. It includes
     - custom environment data to set before running (the igor Job, Layer and Task IDs are automatically
       included in the task environment before launch)
-    - space for a task result
-    - records about retries and what daemon is running the task (if any)
+    - space for a task result that can be set by the user
+    - records about retries / attempts / statistics etc
 
 * Worker
 
@@ -84,7 +81,7 @@ First class lives-in-the-database honest-to-goodness objects:
 
     In addition to this Igor has it's own concept of a user. Each Job, Layer and Task has a user
     id associated with it. Users that aren't admins can only see and modify their own objects, 
-    and can't see workers. Admins see & modify anything.
+    and can't see workers. Admins can see & modify anything.
 
 
 There are other objects that are used to talk to the API, for searching and what not:
@@ -105,17 +102,17 @@ Ok now that you have the basic objects in mind, onward with Igor concepts!
 
 ###### Workflows as first class objects
 
-You cannot define tasks outside of a job. Period. 
+You cannot define tasks outside of a job. Period.
 
 Other systems allow you to define tasks with support for chains, groups and sets of tasks 
 as an afterthought. Igor is built entirely the other way around. And when I say *entirely* I 
 mean it: you can define layers *without* tasks if you so wish. 
 
-Why might want to do this? We'll get to that later...
+Why might want to do this? Well we'll get to that later...
 
 ###### Visibility, tracking all the things
 
-The state of every task, layer, job and even worker is tracked in Igor, right down to process IDs
+The state of every task, layer, job and worker is tracked in Igor, right down to process IDs
 and memory statistics. It doesn't matter if a task has been submitted to the queue or not, 
 whether it wont run in the next 10 years, whether it is running right now, has been paused, 
 retried or errored. It's visible from the API (assuming you have the right to see it).
@@ -124,7 +121,7 @@ retried or errored. It's visible from the API (assuming you have the right to se
 
 * Layer expansion at runtime 
 
-    You can create tasks in any layer up until it begins running, while the parent job 
+    You can create tasks in any layer up until it begins running, even while the parent job 
     is running. It's a snap to launch a two layer job, where the first layer adds tasks to 
     the second. Don't know how many tasks you're going to need exactly? Not a problem.
 
@@ -137,17 +134,16 @@ retried or errored. It's visible from the API (assuming you have the right to se
 
     If pausing isn't your thing you can order Igor to kill (SIGABORT followed by SIGKILL
     if the process doesn't respond within some grace time) whatever whenever you feel like it.
-    You can also retry - kill and then requeue the task(s).
+    You can also retry - kill and then remark task(s) as pending (ie to-be-run).
     If not told otherwise, Igor will retry any task 3 times before deciding that perhaps the 
     task is hopeless. (Idempotency is still important people!).
+    You can of course, continue telling Igor to retry such a task until you're blue in the face.
 
 * Task results
 
    Task results are stored alongside task objects in Igor. A simple API allows you to get or 
-   set the result of any task(s). Igor doesn't try to auto transport your task results to or 
-   from child tasks. It doesn't try to decide *how* or *if* your code would like the results 
-   of previous tasks given to it. Rather Igor sets the id of the task, layer and job in your
-   environment. You can then use the API to get and / or set whatever you want.
+   set the result of any task(s) you want. Igor doesn't try to automatically pass your task results 
+   to or from tasks, that's left for you to do if you want/need to. 
 
 * Task environment
 

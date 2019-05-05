@@ -22,7 +22,7 @@ class Simple(Base):
         iteration_time=10,
         fetch_size_min=1000,
         fetch_size_max=5000,
-        worker_orphan_time=5 * 60,  # 5 mins
+        worker_orphan_time=60,
         queued_tasks_min=10,
     ):
         """A simple scheduler service.
@@ -51,7 +51,7 @@ class Simple(Base):
             any moment.
 
         """
-        self.iteration_time = iteration_time
+        self._iteration_time = iteration_time
         self._fetch_size_min = fetch_size_min
         self._fetch_size_max = fetch_size_max
         self._worker_orphan_time = worker_orphan_time
@@ -88,7 +88,7 @@ class Simple(Base):
             ]
         ))
 
-    def _queue_work(self):
+    def queue_work(self):
         """Queue up tasks from queued layers (if any) assuming we have workers that are idle OR
         our number of queued tasks is too low.
 
@@ -113,11 +113,12 @@ class Simple(Base):
         set_jobs_running = set()
 
         while found >= limit:
+            # get layers that are ready to be launched
             layers = self._svc.get_layers(
                 query=domain.Query(
                     filters=[
                         domain.Filter(
-                            states=[enums.State.QUEUED.value],
+                            states=[enums.State.PENDING.value, enums.State.QUEUED.value],
                         ),
                     ],
                     limit=limit,
@@ -131,6 +132,7 @@ class Simple(Base):
             if not layers:
                 continue
 
+            # get the parent jobs of the aforementioned layers
             all_jobs = self._svc.get_jobs(
                 query=domain.Query(
                     filters=[
@@ -141,6 +143,7 @@ class Simple(Base):
             jobs = {j.id: j for j in all_jobs}
 
             for l in layers:
+                # check if the layer / job is paused, if so, ignore it
                 if l.paused:
                     logger.info(f"skipping layer {l.id}, currently paused.")
                     continue
@@ -154,26 +157,53 @@ class Simple(Base):
                     t for t in self._get_layer_tasks(l.id, states=[enums.State.PENDING.value])
                     if not t.paused
                 ]
-                tasks_fired = self._rnr.queue_tasks(l, tasks)
 
+                tasks_fired = 0
+                if tasks:
+                    # launch all pending non paused tasks
+                    tasks_fired = self._schedule_tasks(l, tasks)
+
+                # set the layer to be 'running'
                 self._svc.update_layer(
                     l.id,
                     None,
                     state=enums.State.RUNNING.value,
                 )
-                if not l.parents:
-                    # ie: no layers from this job have run before if we're starting this layer
-                    set_jobs_running.add(l.job_id)
 
-                launched += tasks_fired
+                if not parent.state == enums.State.RUNNING.value:
+                    # record that we need to set this job running
+                    set_jobs_running.add(l.job_id)
 
                 logger.info(f"launched layer: layer_id:{l.id} tasks:{tasks_fired}")
 
+                # check if we're launched enough for now & exit if so
+                launched += tasks_fired
                 if launched >= idle:
                     break
 
         for job_id in set_jobs_running:
             self._svc.update_job(job_id, None, state=enums.State.RUNNING.value)
+
+    def _schedule_tasks(self, layer: domain.Layer, tasks: list) -> int:
+        """
+
+        :param layer:
+        :param tasks:
+
+        """
+        count = 0
+        for task in tasks:
+            try:
+                self._svc.mark_task_queued(
+                    task.id,
+                    None,
+                    "system scheduled task",
+                    lambda l, t: self._rnr.queue_tasks(l, [t])
+                )
+                count += 1
+            except Exception as e:
+                logger.warning(f"failed to queue task: layer:{layer.id} task:{task.id} err:{e}")
+        return count
 
     def _stop_worker(self, worker: domain.Worker):
         """Kills worker.
@@ -197,28 +227,19 @@ class Simple(Base):
             self._svc.delete_worker(worker.id)
             return  # the worker wasn't running a task so we're ok
 
+        # the worker was running a task. We need to issue a kill, then requeue the task
         self._rnr.send_kill(worker_id=worker.id, task_id=worker.task_id)
 
-        tsk = self._svc.one_task(worker.task_id)
-        if not tsk:
-            return
-
-        self._svc.update_task(
-            tsk.id,
-            None,
-            state=enums.State.PENDING.value,
-            worker_id=None,
-            metadata=tsk.work_record_update(
-                worker.id,
-                worker.host,
-                enums.State.PENDING.value,
-                reason=f"task rescheduled: worker {worker.id} exceeded max ping time",
-            ),
+        self._svc.mark_task_queued(
+            worker.task_id,
+            worker.id,
+            f"worker unresponsive {worker.id} {worker.host} {worker.key}",
+            lambda l, t: self._rnr.queue_tasks(l, [t])
         )
 
         self._svc.delete_worker(worker.id)
 
-    def _orphan_workers(self):
+    def orphan_workers(self):
         """Simple task to find all workers that haven't pinged us within some time period
         and remove them.
 
@@ -284,7 +305,7 @@ class Simple(Base):
         for t in tasks:
             if t.state in [
                 enums.State.RUNNING.value,
-                t.state == enums.State.QUEUED.value
+                enums.State.QUEUED.value,
             ]:
                 still_going.append(t)
 
@@ -292,12 +313,16 @@ class Simple(Base):
                 to_launch.append(t)
                 still_going.append(t)
 
-            else:  # state == ERRORED
+            elif t.state == enums.State.ERRORED.value:
                 if t.attempts >= t.max_attempts:
                     errored.append(t)
                 else:
                     to_launch.append(t)
                     still_going.append(t)
+
+        logger.info(
+            f"layer_id:{layer.id} errored: {len(errored)} relaunching:{len(still_going)}"
+        )
 
         if errored and not still_going:
             # Something is errored & we've done all we can: mark layer as errored.
@@ -307,11 +332,22 @@ class Simple(Base):
 
             # since we're given up on completing this layer, we know that the job too is stuck :(
             self._svc.update_job(layer.job_id, None, state=enums.State.ERRORED.value)
-            return
+        else:
+            self._svc.update_job(layer.job_id, None, state=enums.State.RUNNING.value)
 
-        if to_launch:
             # We've decided to queue some tasks up again .. assuming they're not paused
-            self._rnr.queue_tasks(layer, [t for t in to_launch if not t.paused])
+            for task in to_launch:
+                if task.paused:
+                    continue
+
+                task.attempts += 1
+                self._svc.mark_task_queued(
+                    task.id,
+                    task.worker_id,
+                    f"system retry {task.attempts}",
+                    lambda l, t: self._rnr.queue_tasks(layer, [t]),
+                    attempt=task.attempts,
+                )
 
     def _complete_layer(self, layer: domain.Layer):
         """This layer is done - we need to figure out what other layer(s) can be launched
@@ -343,6 +379,17 @@ class Simple(Base):
                 )
             )
 
+            errored = []
+
+            for sib in siblings_not_finished:
+                if sib.state == enums.State.ERRORED.value:
+                    errored.append(sib)
+                elif sib.state == enums.State.PENDING.value:
+                    self._svc.update_layer(sib.id, None, state=enums.State.QUEUED.value)
+
+            if errored and len(errored) == len(siblings_not_finished):
+                self._svc.update_job(layer.job_id, None, state=enums.State.ERRORED.value)
+
             if siblings_not_finished:
                 return
 
@@ -355,7 +402,12 @@ class Simple(Base):
                 filters=[
                     domain.Filter(
                         layer_ids=layer.children,
-                        states=[enums.State.PENDING.value]
+                        states=[
+                            enums.State.PENDING.value,
+                            enums.State.QUEUED.value,
+                            enums.State.RUNNING.value,
+                            enums.State.ERRORED.value,
+                        ]
                     )
                 ]
             )
@@ -364,10 +416,17 @@ class Simple(Base):
             self._svc.update_job(layer.job_id, None, state=enums.State.COMPLETED.value)
             return
 
+        errored = 0
         for l in next_layers:
-            self._svc.update_layer(l.id, None, state=enums.State.QUEUED.value)
+            if l.state == enums.State.PENDING.value:
+                self._svc.update_layer(l.id, None, state=enums.State.QUEUED.value)
+            elif l.state == enums.State.ERRORED.value:
+                errored += 1
 
-    def _check_running_layers(self):
+        if errored:
+            self._svc.update_job(layer.job_id, None, state=enums.State.ERRORED.value)
+
+    def check_running_layers(self):
         """Iterate through running layers & check their tasks for errors / completion etc.
 
         """
@@ -405,7 +464,7 @@ class Simple(Base):
         self._rnr.send_kill(job_id=job.id)
         self._svc.force_delete_job(job.id)
 
-    def _delete_completed_jobs(self):
+    def archive_completed_jobs(self):
         """Remove jobs that are now completed from the DB.
 
         """
@@ -474,40 +533,14 @@ class Simple(Base):
             found = len(workers)
             offset += found
 
+    @property
+    def iteration_time(self) -> int:
+        return self._iteration_time
+
+    @property
+    def should_run(self) -> bool:
+        return self._run
+
     def run(self):
-        """Run required tasks to ensure
-         - our queue is always feed new tasks (_queue_work)
-         - our running layers need help (_check_running_layers)
-         - workers that have stopped replying to us are removed (_orphan_workers)
-         - old data is archived (_delete_completed_jobs)
-
-        Nb. Ideally all of these would be run in their own processes / threads / hosts etc.
-        But for the simple implementation they're all run here.
-
-        """
         self._create_default_admin_users()
-
-        self._orphan_workers()
-
-        self._delete_completed_jobs()
-
-        while self._run:
-            start_time = time.time()
-            logger.info(f"running scheduler {start_time}")
-
-            # these things need to get done
-            self._queue_work()
-
-            self._check_running_layers()
-
-            # things things we'd like to do if we've got time
-            time_left = self.iteration_time - (time.time() - start_time)
-            if time_left > 0:
-                self._orphan_workers()
-                self._delete_completed_jobs()
-
-            # finally, if there's still time left let's just twiddle our thumbs for a bit
-            time_left = self.iteration_time - (time.time() - start_time)
-            if time_left > 0:
-                logger.info(f"sleeping {time_left}")
-                time.sleep(time_left)
+        super(Simple, self).run()

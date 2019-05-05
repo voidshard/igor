@@ -15,38 +15,13 @@ class Task(Runnable):
         self.key = key
         self.layer_id = None
         self.worker_id = None
-        self.worker_id = None
         self.type = None
         self.cmd = []
+        self.records = []
         self.env = {}
         self.result = None
         self.attempts = 0
         self.max_attempts = self._DEFAULT_RETRY_ATTEMPTS
-
-    def work_record_update(self, worker_id, worker_host, task_state, reason="") -> dict:
-        """Create a new work record with standard metadata.
-
-        :param worker_id:
-        :param worker_host:
-        :param task_state:
-        :param reason:
-        :return: dict
-
-        """
-        records = self.metadata.get("records", [])
-        if not isinstance(records, list):
-            records = []
-
-        records.append({
-            "worker": worker_id,
-            "host": worker_host,
-            "time": time.time(),
-            "state": task_state,
-            "reason": reason,
-        })
-
-        self.metadata['records'] = records
-        return self.metadata
 
     @classmethod
     def new(cls, type_, cmd: list, env: dict, metadata: dict=None, key=None):
@@ -86,6 +61,7 @@ class Task(Runnable):
             "etag": self.etag,
             "type": self.type,
             "cmd": self.cmd,
+            "records": self.records,
             "env": self.env,
             "worker_id": self.worker_id,
             "runner_id": self.runner_id,
@@ -116,6 +92,7 @@ class Task(Runnable):
         me.state = data.get("state")
         me.type = data.get("type")
         me.cmd = data.get("cmd", [])
+        me.records = data.get("records", [])
         me.env = data.get("env", {})
         me.runner_id = data.get("runner_id")
         me.metadata = data.get("metadata", {})

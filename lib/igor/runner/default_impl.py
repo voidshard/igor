@@ -2,6 +2,7 @@ import copy
 import threading
 import time
 import os
+import random
 
 from queue import Queue
 from redis import Redis
@@ -10,35 +11,11 @@ from igor import domain
 from igor import enums
 from igor import exceptions as exc
 from igor import utils
-from igor import loggers
 from igor.runner.base import Base
 from igor.runner import default as runner
 
 
 logger = utils.logger()
-
-
-class _Logger:
-    """Small wrapper logger class to add in our task / worker id & some kwargs whenever called.
-
-    """
-
-    def __init__(self, lgr, task_id, worker_id, **kwargs):
-        self._logger = lgr
-        self._task_id = task_id
-        self._worker_id = worker_id
-        self._kwargs = kwargs or {}
-
-    def log(self, line, **kwargs):
-        """Log a line to the logger.
-
-        :param line:
-        :param kwargs:
-
-        """
-        all_kwargs = copy.copy(self._kwargs)
-        all_kwargs.update(kwargs)
-        self._logger.log(self._task_id, self._worker_id, line, **all_kwargs)
 
 
 class DefaultRunner(Base):
@@ -49,10 +26,13 @@ class DefaultRunner(Base):
 
     _CHAN_WORKERS = "workers"  # channel all workers subscribe to
 
-    def __init__(self, svc, host: str="redis", port: int=6379, ping_time=60):
+    def __init__(
+        self, svc, host: str="redis", port: int=6379, ping_time=30, max_unexpected_errors=10
+    ):
         self._worker = None
         self._svc = svc
         self._default_env = None
+        self._max_unexpected_errors = max_unexpected_errors
 
         # connections to redis for queuing / messaging
         self._conn = Redis(decode_responses=True, host=host, port=port)
@@ -109,24 +89,6 @@ class DefaultRunner(Base):
             # sleep for a bit
             time.sleep(ping_time)
 
-    def _queue_task(self, task, priority=0):
-        """Add a task to the queue for execution.
-
-        :param task:
-
-        """
-        self._svc.update_task(
-            task.id,
-            None,
-            state=enums.State.QUEUED.value,
-            runner_id=task.id,
-        )
-        self._queue.add(
-            self._QUEUE_MAIN,
-            f"{task.job_id}:{task.layer_id}:{task.id}",
-            priority
-        )
-
     def queue_tasks(self, layer, tasks) -> int:
         """Queue a list of tasks.
 
@@ -138,12 +100,12 @@ class DefaultRunner(Base):
         count = 0
 
         for t in tasks:
-            try:
-                self._queue_task(t, layer.priority)
-                count += 1
-            except Exception as e:
-                logger.warn(f"error queuing: task_id:{t.id} error:{e}")
-                raise e
+            self._queue.add(
+                self._QUEUE_MAIN,
+                self._make_queue_key(t.job_id, t.layer_id, t.id),
+                layer.priority
+            )
+            count += 1
 
         logger.info(f"tasks queued: layer_id:{layer.id} tasks:{count}")
 
@@ -182,9 +144,6 @@ class DefaultRunner(Base):
             logger.warn(f"dropping task:{task_id} state:{tsk.state}")
             return True
 
-        # TODO add support for other loggers
-        task_logger = _Logger(loggers.StdoutLogger(), task_id, self._worker.id)
-
         env = copy.copy(self._default_env)
 
         if tsk.env:
@@ -204,26 +163,25 @@ class DefaultRunner(Base):
             tsk.attempts += 1
 
             # log what we're doing
-            task_logger.log("-" * 10 + "loading" + "-" * 10)
-            task_logger.log(f"attempt={tsk.attempts}")
-            task_logger.log(f"command={tsk.cmd}")
-            task_logger.log("environment:")
+            print("-" * 10 + "loading" + "-" * 10)
+            print(f"attempt={tsk.attempts}")
+            print(f"command={tsk.cmd}")
+            print("environment:")
             for k, v in env.items():
-                task_logger.log(f"{k}={v}")
-            task_logger.log("-" * 10 + "starting" + "-" * 10)
+                print(f"{k}={v}")
+            print("-" * 10 + "starting" + "-" * 10)
 
             # run the cmd
             exit_code, pm_code, err_message = self._process_manager.run(
                 [job_id, layer_id, task_id],
-                task_logger,
                 tsk.cmd,
                 env=env
             )
 
             # log the result
-            task_logger.log("-" * 10 + "process finished" + "-" * 10)
-            task_logger.log(f"exit_code={exit_code}")
-            task_logger.log(f"message={err_message}")
+            print("-" * 10 + "process finished" + "-" * 10)
+            print(f"exit_code={exit_code}")
+            print(f"message={err_message}")
 
             # There are 3 outcomes
             #  The task completes successfully
@@ -288,6 +246,42 @@ class DefaultRunner(Base):
         self._do_pubsub = False
         self._worker_queue.put(False)
 
+    @staticmethod
+    def _make_queue_key(job_id, layer_id, task_id, attempt=0):
+        """Create a key string holding the given data.
+
+        :param job_id:
+        :param layer_id:
+        :param task_id:
+        :param attempt:
+        :return: str
+
+        """
+        return ":".join([job_id, layer_id, task_id, str(attempt)])
+
+    @staticmethod
+    def _read_queue_key(value):
+        """Read data back from key string (see _make_queue_key)
+
+        Returns job_id, layer_id, task_id, times_queued
+
+        :param value:
+        :return: str, str, str, int
+
+        """
+        if value.count(":") != 3:
+            logger.warning(f"discarding invalid work request: {value}")
+            return None, None, None, None
+
+        job_id, layer_id, task_id, times_queued = value.split(":", 3)
+
+        try:
+            times_queued = int(times_queued)
+        except ValueError:
+            times_queued = 0
+
+        return job_id, layer_id, task_id, times_queued
+
     def _start(self):
         """Run the main worker. This should continue to pull tasks from the queue
         and do them, so long as it's unpaused.
@@ -305,28 +299,46 @@ class DefaultRunner(Base):
                 accept_work = self._worker_queue.get()
                 continue
 
-            value = self._queue.pop(self._QUEUE_MAIN)
+            value, job_id, layer_id, task_id = "", "", "", ""
             try:
+                value = self._queue.pop(self._QUEUE_MAIN)
+
                 if not value:
-                    # Since there is no work in the queue we'll wait until an announcement tells us
-                    # there is new work to be done.
-                    accept_work = False
+                    time.sleep(random.randint(1, 5))  # no work? sleep for a few seconds
                     continue
 
                 logger.info(f"work received: value:{value}")
 
-                if value.count(":") != 2:
-                    continue
-
-                job_id, layer_id, task_id = value.split(":", 2)
+                job_id, layer_id, task_id, times_queued = self._read_queue_key(value)
 
                 accept_work = self._do_task(job_id, layer_id, task_id)
             except Exception as e:
-                # If ANYTHING horribly unexpected happens we MUST re-queue the task.
                 logger.error(
-                    f"unexpected exception during task processing: value:{value} error:{e}"
+                    f"unexpected exception during task processing: "
+                    f"value:{value} error:{e} attempts: {times_queued}"
                 )
-                self._queue.add(self._QUEUE_MAIN, value, 0)
+
+                if times_queued >= self._max_unexpected_errors:
+                    logger.warning(f"discarding task from queue, too many requeue errors: {value}")
+
+                    if task_id:
+                        try:
+                            self._svc.force_task_state(task_id, times_queued, str(e))
+                        except Exception as e:
+                            logger.warning(f"failed to mark task errored: {e} {task_id}")
+
+                    continue
+
+                logger.info(f"attempting requeue of task: {value}")
+
+                if all([job_id, layer_id, task_id]):
+                    self._queue.add(
+                        self._QUEUE_MAIN,
+                        self._make_queue_key(job_id, layer_id, task_id, attempt=times_queued + 1),
+                        0
+                    )
+                elif value:
+                    self._queue.add(self._QUEUE_MAIN, value, 1)
 
     def _thread_subscribe(self):
         """Thread to listen for & handle incoming messages.

@@ -2,7 +2,7 @@ import pprint
 
 from igorUI.ui.widgets.widget import DetailsWidget, DetailsPanel
 from igorUI.ui.manifest import *
-from igorUI import client
+from igorUI import service
 
 
 class _JobDetailsWidget(DetailsWidget):
@@ -26,7 +26,7 @@ class _JobDetailsWidget(DetailsWidget):
         self._widget_paused.setText(obj.paused)
 
     def fetch_object(self):
-        return client.Service.one_job(self._object_id)
+        return service.Service.one_job(self._object_id)
 
 
 class JobDetailsPanel(DetailsPanel):
@@ -66,7 +66,7 @@ class _LayerDetailsWidget(_JobDetailsWidget):
         self._widget_children.setText(f"{len(obj.children)}")
 
     def fetch_object(self):
-        return client.Service.one_layer(self._object_id)
+        return service.Service.one_layer(self._object_id)
 
 
 class LayerDetailsPanel(DetailsPanel):
@@ -97,6 +97,10 @@ class _TaskDetailsWidget(_JobDetailsWidget):
         self._widget_result.setToolTip("task 'result' object currently in the system")
         self.mainlayout.addWidget(self._widget_result, 3, 0)
 
+        self._widget_record = QTextEdit()
+        self._widget_record.setToolTip("task 'records' recorded by the system")
+        self.mainlayout.addWidget(self._widget_record, 4, 0)
+
     def set_widgets(self, obj):
         """
 
@@ -111,9 +115,10 @@ class _TaskDetailsWidget(_JobDetailsWidget):
         self._widget_cmd.setText(obj.cmd_string)
         self._widget_env.setText(pprint.pformat(obj.env, indent=2))
         self._widget_result.setText(f"{obj.result}")
+        self._widget_record.setText(f"{obj.records}")
 
     def fetch_object(self):
-        return client.Service.one_task(self._object_id)
+        return service.Service.one_task(self._object_id)
 
 
 class TaskDetailsPanel(DetailsPanel):
@@ -150,7 +155,7 @@ class _WorkerDetailsWidget(DetailsWidget):
         self._widget_last_ping.setText(obj.last_ping_time)
 
     def fetch_object(self):
-        return client.Service.one_worker(self._object_id)
+        return service.Service.one_worker(self._object_id)
 
 
 class WorkerDetailsPanel(DetailsPanel):

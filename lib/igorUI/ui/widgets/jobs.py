@@ -10,8 +10,8 @@ from igorUI.ui.widgets.widget import (
 from igorUI.ui.manifest import QVBoxLayout, Qt, QMenu, QIcon
 from igorUI.ui import resources
 from igorUI.ui.events import Events
-from igorUI import client
-from igorUI.client import enums
+from igorUI import service
+from igorUI.service import enums
 
 
 class JobPanel(ClosablePanel):
@@ -22,6 +22,16 @@ class JobPanel(ClosablePanel):
         self.setWidget(_JobWidget(self))
         self.setWindowTitle("Jobs")
         self.set_title("Jobs")
+
+    @property
+    def default_dock_widget_area(self):
+        """Return where this widget should be placed by default, relative to
+        the dock widget it belongs to.
+
+        Returns:
+            int
+        """
+        return Qt.TopDockWidgetArea
 
 
 class _JobWidget(PanelWidget):
@@ -74,11 +84,43 @@ class _JobWidget(PanelWidget):
             self.__pause_selected
         )
         menu.addAction(
+            QIcon(resources.get("retry.png")),
+            "Retry",
+            self.__retry_selected
+        )
+        menu.addAction(
+            QIcon(resources.get("skip.png")),
+            "Skip",
+            self.__skip_selected
+        )
+        menu.addAction(
             QIcon(resources.get("kill.png")),
             "Kill",
             self.__kill_selected
         )
         menu.exec_(self.mapToGlobal(pos))
+
+    def __skip_selected(self):
+        """
+
+        """
+        for o in self.get_selected():
+            try:
+                service.Service.skip_job(o.id, o.etag)
+            except Exception as e:
+                Events.Status.emit(f"error skipping job {o.id}: {e}")
+        self.__refresh()
+
+    def __retry_selected(self):
+        """
+
+        """
+        for o in self.get_selected():
+            try:
+                service.Service.retry_job(o.id, o.etag)
+            except Exception as e:
+                Events.Status.emit(f"error retrying job {o.id}: {e}")
+        self.__refresh()
 
     def __pause_selected(self):
         """
@@ -86,7 +128,7 @@ class _JobWidget(PanelWidget):
         """
         for o in self.get_selected():
             try:
-                client.Service.pause_job(o.id, o.etag)
+                service.Service.pause_job(o.id, o.etag)
             except Exception as e:
                 Events.Status.emit(f"error pausing job {o.id}: {e}")
         self.__refresh()
@@ -97,7 +139,7 @@ class _JobWidget(PanelWidget):
         """
         for o in self.get_selected():
             try:
-                client.Service.kill_job(o.id, o.etag)
+                service.Service.kill_job(o.id, o.etag)
             except Exception as e:
                 Events.Status.emit(f"error killing job {o.id}: {e}")
         self.__refresh()
@@ -118,6 +160,7 @@ class _JobWidget(PanelWidget):
         Args:
             index (QIndex):
         """
+        self.__itemClicked(index)
         obj = index.data(self._model.ObjectRole)
         Events.OpenDetails.emit("job", obj.id)
 
@@ -127,7 +170,7 @@ class _JobModel(AbstractEditableTableModel):
     HEADERS = ["Name", "JobId", "State", "Paused", "UserId"]
 
     DISPLAY_CALLBACKS = {
-        0: lambda n: n.key,
+        0: lambda n: n.name,
         1: lambda n: n.id,
         2: lambda n: n.state,
         3: lambda n: n.paused,
@@ -161,7 +204,7 @@ class _JobModel(AbstractEditableTableModel):
             []Job
         """
         try:
-            for i in client.Service.get_jobs(states=enums.ALL_NOT_COMPLETE):
+            for i in service.Service.get_jobs(states=enums.ALL_NOT_COMPLETE):
                 yield i
         except Exception as e:
             Events.Status.emit(f"unable to fetch job information: {e}")

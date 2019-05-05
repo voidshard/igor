@@ -459,11 +459,10 @@ class TestCreateTask:
         gate._build_task.return_value = task
 
         # act
-        result_id, result_tag = gate.create_task(user, obj.id, tspec)
+        result = gate.create_task(user, obj.id, tspec)
 
         # assert
-        assert task.id == result_id
-        assert task.etag == result_tag
+        assert {task.id: task.etag} == result
         assert svc.create_tasks.called_with(obj.id, [task])
 
 

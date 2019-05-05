@@ -85,7 +85,7 @@ class _Container:
 class Client:
 
     _postgres = 'docker.io/postgres:9.5'
-    _redis = 'docker.io/redis'
+    _redis = 'docker.io/redis:latest'
 
     def __init__(self, url=_DEFAULT_URL):
         self._client = docker.DockerClient(base_url=url)

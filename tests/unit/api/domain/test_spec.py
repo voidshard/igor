@@ -106,29 +106,6 @@ class TestJobSpec:
         assert given["name"] == result.name
         assert given["user_id"] == result.user_id
 
-    @pytest.mark.parametrize('given, expect', [  # arrange
-        (
-            None,
-            {
-                "type": enums.LoggerType.STDOUT.value,
-            }
-        ),
-        (
-            {
-                "type": enums.LoggerType.STDOUT.value,
-            },
-            {
-                "type": enums.LoggerType.STDOUT.value,
-            }
-        ),
-    ])
-    def test_to_logger_config(self, given, expect):
-        # act
-        result = spec.JobSpec.to_logger_config(given)
-
-        # assert
-        assert result == expect
-
     @pytest.mark.parametrize('given', [  # arrange
         {"user_id": None},
         {"user_id": "invalid"},

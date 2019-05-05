@@ -18,6 +18,8 @@ from igor.api import exceptions as api_exc
 logger = utils.logger()
 
 _action_pause = "pause"
+_action_skip = "skip"
+_action_kill = "kill"
 _action_retry = "retry"
 
 
@@ -63,10 +65,10 @@ def error_wrap(f):
 
         try:
             return f(*args, **kwargs)
+        except (exc.UserNotFound, api_exc.Unauthorized, api_exc.Forbidden) as e:
+            return self._err(e), 401  # .. who are you again?
         except (exc.IllegalOp, api_exc.InvalidSpec, exc.InvalidArg, exc.InvalidState) as e:
             return self._err(e), 400  # you sent something unexpected
-        except (api_exc.Unauthorized, api_exc.Forbidden) as e:
-            return self._err(e), 401  # .. who are you again?
         except exc.NotFound as e:
             return self._err(e), 404  # nope can't find that
         except (exc.WriteConflictError, exc.WorkerMismatch, api_exc.WriteConflict) as e:
@@ -123,26 +125,13 @@ class HttpTransport(Base):
         """
         return json.dumps({"error": str(reason)})
 
-    @staticmethod
-    def _id(id_, tag) -> dict:
-        """Return generic reply from a create call.
-
-        :param id_:
-        :param tag:
-        :return: dict
-
-        """
-        return json.dumps({"id": id_, "etag": tag})
-
     @error_wrap
     @requires_auth
     def handle_jobs(self, user: domain.User=None):
-        """
+        """Handle requests to the /jobs route
 
         if method is GET we expect a QuerySpec
         if method is POST we expect a JobSpec
-
-        :return:
 
         """
         try:
@@ -152,8 +141,8 @@ class HttpTransport(Base):
 
         method = request.method
         if method == "POST":
-            result, tag = self._gate.create_job(user, spec.JobSpec.decode(data))
-            return self._id(result, tag), 203
+            result = self._gate.create_job(user, spec.JobSpec.decode(data))
+            return json.dumps(result), 203
         else:
             result = self._gate.get_jobs(user, spec.QuerySpec.decode(data or {}))
             return json.dumps([r.encode() for r in result]), 200
@@ -161,9 +150,7 @@ class HttpTransport(Base):
     @error_wrap
     @requires_auth
     def handle_layers(self, user: domain.User=None):
-        """
-
-        :return:
+        """Handle requests to the /layers route
 
         """
         try:
@@ -177,9 +164,7 @@ class HttpTransport(Base):
     @error_wrap
     @requires_auth
     def handle_tasks(self, user: domain.User=None):
-        """
-
-        :return:
+        """Handle requests to the /tasks route
 
         """
         try:
@@ -193,6 +178,11 @@ class HttpTransport(Base):
     @error_wrap
     @requires_auth
     def handle_workers(self, user: domain.User=None):
+        """Handle requests to the /workers route
+
+        :param user:
+
+        """
         try:
             data = json.loads(request.data or "{}")
         except Exception as e:
@@ -204,9 +194,11 @@ class HttpTransport(Base):
     @error_wrap
     @requires_auth
     def handle_job(self, id_: str, user: domain.User=None):
-        """
+        """Handle DELETE, POST and GET requests for a single job.
 
-        :return:
+        - on delete kill the job
+        - on POST check for an action (pause, kill, skip, retry etc)
+        - on GET return the job by ID
 
         """
         if request.method == "DELETE":
@@ -222,8 +214,21 @@ class HttpTransport(Base):
             action = data.get("action")
 
             if action == _action_pause:
-                etag = self._gate.perform_pause(user, request_tag(), job_id=id_)
-                return self._id(id_, etag), 200
+                result = self._gate.perform_pause(user, request_tag(), job_id=id_)
+                return json.dumps(result), 200
+
+            elif action == _action_kill:
+                result = self._gate.perform_kill(user, request_tag(), job_id=id_)
+                return json.dumps(result), 200
+
+            elif action == _action_skip:
+                result = self._gate.perform_skip(user, request_tag(), job_id=id_)
+                return json.dumps(result), 200
+
+            elif action == _action_retry:
+                result = self._gate.perform_retry(user, request_tag(), job_id=id_)
+                return json.dumps(result), 200
+
             else:
                 return self._err(f"unknown action {action}"), 400
 
@@ -232,9 +237,11 @@ class HttpTransport(Base):
     @error_wrap
     @requires_auth
     def handle_layer(self, id_: str, user: domain.User=None):
-        """
+        """Handle DELETE, POST and GET requests for a single layer.
 
-        :return:
+        - on delete kill the layer
+        - on POST check for an action (pause, kill, skip, retry etc)
+        - on GET return the layer by ID
 
         """
         if request.method == "DELETE":
@@ -250,8 +257,21 @@ class HttpTransport(Base):
             action = data.get("action")
 
             if action == _action_pause:
-                etag = self._gate.perform_pause(user, request_tag(), layer_id=id_)
-                return self._id(id_, etag), 200
+                result = self._gate.perform_pause(user, request_tag(), layer_id=id_)
+                return json.dumps(result), 200
+
+            elif action == _action_kill:
+                result = self._gate.perform_kill(user, request_tag(), layer_id=id_)
+                return json.dumps(result), 200
+
+            elif action == _action_skip:
+                result = self._gate.perform_skip(user, request_tag(), layer_id=id_)
+                return json.dumps(result), 200
+
+            elif action == _action_retry:
+                result = self._gate.perform_retry(user, request_tag(), layer_id=id_)
+                return json.dumps(result), 200
+
             else:
                 return self._err(f"unknown action {action}"), 400
 
@@ -260,20 +280,16 @@ class HttpTransport(Base):
     @error_wrap
     @requires_auth
     def handle_task_result(self, id_: str, user: domain.User=None):
-        """
-
-        :return:
+        """Handle a POST to set the result of a task.
 
         """
-        etag = self._gate.set_task_result(user, request_tag(), id_, request.data)
-        return self._id(id_, etag), 200
+        result = self._gate.set_task_result(user, request_tag(), id_, request.data)
+        return json.dumps(result), 200
 
     @error_wrap
     @requires_auth
     def handle_task_env(self, id_: str, user: domain.User=None):
-        """
-
-        :return:
+        """Handle a POST to set the env var of a task.
 
         """
         try:
@@ -281,15 +297,18 @@ class HttpTransport(Base):
         except Exception as e:
             return self._err(e), 400
 
-        etag = self._gate.set_task_env(user, request_tag(), id_, data)
-        return self._id(id_, etag), 200
+        result = self._gate.set_task_env(user, request_tag(), id_, data)
+        return json.dumps(result), 200
 
     @error_wrap
     @requires_auth
     def handle_task(self, id_: str, user: domain.User=None):
-        """
+        """Handle GET, POST and DELETE requests for a single task
 
-        :return:
+        - on delete kill the task
+        - on POST check for an action (pause, kill, skip, retry etc)
+        - on GET return the task by ID
+
 
         """
         if request.method == "DELETE":
@@ -305,11 +324,21 @@ class HttpTransport(Base):
             action = data.get("action")
 
             if action == _action_pause:
-                etag = self._gate.perform_pause(user, request_tag(), task_id=id_)
-                return self._id(id_, etag), 200
+                result = self._gate.perform_pause(user, request_tag(), task_id=id_)
+                return json.dumps(result), 200
+
+            elif action == _action_kill:
+                result = self._gate.kill_task(user, request_tag(), id_)
+                return json.dumps(result), 200
+
+            elif action == _action_skip:
+                result = self._gate.perform_skip(user, request_tag(), task_id=id_)
+                return json.dumps(result), 200
+
             elif action == _action_retry:
-                etag = self._gate.retry_task(user, request_tag(), id_)
-                return self._id(id_, etag), 200
+                result = self._gate.perform_retry(user, request_tag(), task_id=id_)
+                return json.dumps(result), 200
+
             else:
                 return self._err(f"unknown action {action}"), 400
 
@@ -318,12 +347,21 @@ class HttpTransport(Base):
     @error_wrap
     @requires_auth
     def handle_worker(self, id_: str, user: domain.User=None):
+        """Return a single worker object by ID.
+
+        :param id_:
+        :param user:
+
+        """
         return json.dumps(self._gate.one_worker(user, id_).encode()), 200
 
     @error_wrap
     @requires_auth
     def handle_create_task(self, id_: str, user: domain.User=None):
-        """
+        """Create task(s) on some already existing parent layer.
+
+        - We only handle POST
+          - Accept either list of tasks or a single task
 
         :param id_: parent layer id
         :param user:
@@ -335,16 +373,16 @@ class HttpTransport(Base):
             return self._err(e), 400
 
         if isinstance(data, list):  # we can accept a task or list of tasks
-            results = []
+            all_results = {}
 
             for i in data:
-                result, tag = self._gate.create_task(user, id_, spec.TaskSpec.decode(i))
-                results.append({"id": result, "etag": tag})
+                result = self._gate.create_task(user, id_, spec.TaskSpec.decode(i))
+                all_results.update(result)
 
-            return json.dumps(results), 203
+            return json.dumps(all_results), 203
         else:
-            result, tag = self._gate.create_task(user, id_, spec.TaskSpec.decode(data))
-            return self._id(result, tag), 203
+            result = self._gate.create_task(user, id_, spec.TaskSpec.decode(data))
+            return json.dumps(result), 203
 
     @staticmethod
     def redirect_to_ssl():

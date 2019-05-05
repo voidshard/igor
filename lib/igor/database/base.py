@@ -3,9 +3,7 @@ import abc
 from igor import domain
 
 
-class Base(metaclass=abc.ABCMeta):
-
-    _DEFAULT_LIMIT = 500
+class TransactionBase(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def create_job(self, job: domain.Job, layers: list, tasks: list):
@@ -172,7 +170,7 @@ class Base(metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def idle_workers(self, limit: int=_DEFAULT_LIMIT, offset: int=0) -> list:
+    def idle_workers(self, limit: int=0, offset: int=0) -> list:
         """
 
         :param limit:
@@ -267,6 +265,22 @@ class Base(metaclass=abc.ABCMeta):
 
         :param query:
         :return: list
+
+        """
+        pass
+
+    @abc.abstractmethod
+    def create_task_record(self, tsk: domain.Task, wkr_id: str, state, reason=""):
+        pass
+
+
+class Base(TransactionBase):
+
+    _DEFAULT_LIMIT = 500
+
+    @abc.abstractmethod
+    def transaction(self):
+        """
 
         """
         pass

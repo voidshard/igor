@@ -132,7 +132,7 @@ class UserSpec(_Decode):
     def decode(cls, data: dict):
         me = cls()
 
-        me.name = cls.to_name(data.get("name"))
+        me.name = cls.to_name(data.get("name", data.get("key")))
         me.is_admin = cls.to_bool(data.get("is_admin", False))
         me.password = cls.to_name(data.get("password"))
         if not me.password:
@@ -188,6 +188,7 @@ class FilterSpec(_Decode):
         self.job_ids = []
         self.layer_ids = []
         self.task_ids = []
+        self.worker_ids = []
         self.states = []
         self.keys = []
 
@@ -198,13 +199,14 @@ class FilterSpec(_Decode):
         me.job_ids = cls.to_list_ids(data.get("job_ids", []))
         me.layer_ids = cls.to_list_ids(data.get("layer_ids", []))
         me.task_ids = cls.to_list_ids(data.get("task_ids", []))
+        me.worker_ids = cls.to_list_ids(data.get("worker_ids", []))
 
         me.states = cls.to_list_str(data.get("states", []))
         for state in me.states:
             if state not in _VALID_STATES:
                 raise exc.InvalidSpec(f"unknown state: {state}")
 
-        me.keys = cls.to_list_str(data.get("keys", []))
+        me.keys = cls.to_list_str(data.get("keys", data.get("names", [])))
 
         return me
 
@@ -218,54 +220,11 @@ class JobSpec(_Decode):
         # optional
         self.name = None
         self.paused = False
-        self.logger = {
-            "type": enums.LoggerType.STDOUT.value,
-            "host": None,
-            "port": None,
-        }
-
-    @classmethod
-    def to_logger_config(cls, ldata):
-        """
-
-        :param ldata:
-        :return: dict
-
-        """
-        if ldata is None:
-            return {"type": enums.LoggerType.STDOUT.value}
-
-        if not isinstance(ldata, dict):
-            raise exc.InvalidSpec(f"expected logger config as dict, got: {ldata}")
-
-        ltype = ldata.get("type")
-        if ltype == enums.LoggerType.STDOUT.value:
-            return {"type": enums.LoggerType.STDOUT.value}
-
-        # elif ltype == enums.LoggerType.UDP.value:
-        #     host = ldata.get("host")
-        #     if not host:
-        #         raise exc.InvalidSpec(f"expected logger config to contain 'host' property")
-        #
-        #     port = cls.to_int(ldata.get("port", -1))
-        #     if not port:
-        #         raise exc.InvalidSpec(f"expected logger config to contain 'port' property")
-        #
-        #     if not (0 < port < 65536):
-        #         raise exc.InvalidSpec(f"logger config port number out of bounds: {port}")
-        #
-        #     return {
-        #         "type": enums.LoggerType.UDP.value,
-        #         "host": str(host),
-        #         "port": cls.to_int(port),
-        #     }
-
-        raise exc.InvalidSpec(f"unknown logger 'type' got: {ltype}")
 
     @classmethod
     def decode(cls, data: dict):
         me = cls()
-        me.name = cls.to_name(data.get("name"))
+        me.name = cls.to_name(data.get("name", data.get("key")))
         me.user_id = None
         me.paused = cls.to_bool(data.get("paused",  False))
 
@@ -273,7 +232,6 @@ class JobSpec(_Decode):
         if uid:
             me.user_id = cls.to_id(uid)
 
-        me.logger = cls.to_logger_config(data.get("logger"))
         me.layers = cls.to_list_children(
             "layer",
             LayerSpec,
@@ -302,7 +260,7 @@ class LayerSpec(_Decode):
 
         me.order = cls.to_int(data.get("order", 0))
         me.priority = cls.to_int(data.get("priority", 0))
-        me.name = cls.to_name(data.get("name"))
+        me.name = cls.to_name(data.get("name", data.get("key")))
         me.paused = cls.to_bool(data.get("paused",  False))
 
         me.tasks = cls.to_list_children(
@@ -362,6 +320,6 @@ class TaskSpec(_Decode):
 
         me.max_attempts = cls.to_int(data.get("max_attempts", 3))
         me.env = cls.to_env_dict(data.get("env", {}))
-        me.name = cls.to_name(data.get("name"))
+        me.name = cls.to_name(data.get("name", data.get("key")))
 
         return me

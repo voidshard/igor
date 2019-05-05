@@ -36,7 +36,7 @@ class TestIgorService:
 
         # act & assert
         with pytest.raises(exc.WorkerMismatch):
-            self.svc.stop_work_task(worker.id, task.id, "FOOBAR")
+            self.svc.stop_work_task(worker.id, task.id, "COMPLETED")
 
     def test_start_work_task_raises_worker_mismatch(self):
         # arrange
@@ -60,13 +60,22 @@ class TestIgorService:
         task.job_id = str(uuid.uuid4())
         task.layer_id = str(uuid.uuid4())
 
-        update_worker = mock.MagicMock()
-        update_task = mock.MagicMock()
+        class FakeTxn:
+            def __init__(self, t):
+                self.txn = t
+
+            def __enter__(self):
+                return self.txn
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+        txn = mock.MagicMock()
+        f = FakeTxn(txn)
 
         self.svc.one_worker = lambda *args: worker
         self.svc.one_task = lambda *args: task
-        self.svc.update_worker = update_worker
-        self.svc.update_task = update_task
+        self.db.transaction = lambda *args: f
 
         time_now = time.time()
 
@@ -79,7 +88,7 @@ class TestIgorService:
         self.svc.start_work_task(worker.id, task.id)
 
         # assert
-        update_worker.assert_called_with(
+        txn.update_worker.assert_called_with(
             worker.id,
             worker.etag,
             task_started=time_now,
@@ -88,7 +97,7 @@ class TestIgorService:
             task_id=task.id,
         )
 
-        update_task.assert_called_with(
+        txn.update_task.assert_called_with(
             task.id,
             task.etag,
             state=enums.State.RUNNING.value,
@@ -102,13 +111,22 @@ class TestIgorService:
         task.job_id = str(uuid.uuid4())
         task.layer_id = str(uuid.uuid4())
 
-        update_worker = mock.MagicMock()
-        update_task = mock.MagicMock()
+        class FakeTxn:
+            def __init__(self, t):
+                self.txn = t
 
+            def __enter__(self):
+                return self.txn
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+        txn = mock.MagicMock()
+        f = FakeTxn(txn)
+
+        self.db.transaction = lambda *args: f
         self.svc.one_worker = lambda *args: worker
         self.svc.one_task = lambda *args: task
-        self.svc.update_worker = update_worker
-        self.svc.update_task = update_task
 
         time_now = time.time()
 
@@ -117,12 +135,9 @@ class TestIgorService:
 
         monkeypatch.setattr("igor.service.time.time", t)
 
-        new_state = "FOOBAR"
+        new_state = "COMPLETED"
         new_reason = "BLAH : {} fobar"
         new_attempts = 26
-        expected_meta = task.work_record_update(
-            worker.id, worker.host, new_state, reason=new_reason
-        )
 
         # act
         self.svc.stop_work_task(
@@ -134,7 +149,7 @@ class TestIgorService:
         )
 
         # assert
-        update_worker.assert_called_with(
+        txn.update_worker.assert_called_with(
             worker.id,
             worker.etag,
             task_finished=time_now,
@@ -143,12 +158,11 @@ class TestIgorService:
             task_id=None,
         )
 
-        update_task.assert_called_with(
+        txn.update_task.assert_called_with(
             task.id,
             task.etag,
             state=new_state,
             worker_id=None,
-            metadata=expected_meta,
             attempts=new_attempts,
         )
 
@@ -236,6 +250,7 @@ class TestIgorService:
                 str(uuid.uuid4()): str(uuid.uuid4()),
             },
             "state": "SOME_STATE",
+            "env": "SOME_RESULT",
         }
 
         # act

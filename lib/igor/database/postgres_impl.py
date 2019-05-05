@@ -1,3 +1,4 @@
+import collections
 import time
 import json
 import uuid
@@ -6,32 +7,66 @@ import psycopg2
 from psycopg2.extras import DictCursor
 
 from igor import domain
+from igor import enums
 from igor import exceptions as exc
-from igor.database.base import Base
+from igor.database.base import Base, TransactionBase
 
 
-class PostgresDB(Base):
+_DEFAULT_LIMIT = 500
+_MAX_LIMIT = 10000
 
-    _DEFAULT_LIMIT = 500
-    _MAX_LIMIT = 10000
 
-    # database
-    _DB = "igor"
-
+class _Transaction(TransactionBase):
     # tables
     _T_JOB = "jobs"
     _T_LYR = "layers"
     _T_TSK = "tasks"
+    _T_REC = "task_records"
     _T_WKR = "workers"
     _T_USR = "users"
 
-    def __init__(self, host='database', port=5432):
-        self._conn = psycopg2.connect(
-            host=host,
-            port=port,
-            database=self._DB,
-            user="postgres",
-            cursor_factory=DictCursor,
+    def __init__(self, conn):
+        self._conn = conn
+        self._cur = None
+
+    def __enter__(self):
+        self._cur = self._conn.cursor()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if exc_type:
+                raise exc_type(exc_val)
+
+            self._conn.commit()
+        except Exception as e:
+            self._conn.rollback()
+            raise e
+        finally:
+            self._cur.close()
+
+    INSERT_REC = f"""INSERT INTO {_T_REC} (
+        str_task_record_id,
+        str_job_id,
+        str_layer_id,
+        str_task_id,
+        str_worker_id,
+        str_reason,
+        enum_state) VALUES (%s, %s, %s, %s, %s, %s, %s);
+    """
+
+    def create_task_record(self, tsk: domain.Task, wkr_id: str, state, reason=""):
+        """
+
+        :param tsk:
+        :param wkr_id:
+        :param state:
+        :param reason:
+
+        """
+        self._cur.execute(
+            self.INSERT_REC,
+            (uuid.uuid4().hex, tsk.job_id, tsk.layer_id, tsk.id, wkr_id, reason, state)
         )
 
     INSERT_USER = f"""INSERT INTO {_T_USR} (
@@ -48,9 +83,8 @@ class PostgresDB(Base):
         :param user:
 
         """
-        cur = self._conn.cursor()
         try:
-            cur.execute(
+            self._cur.execute(
                 self.INSERT_USER,
                 (
                     user.id,
@@ -63,13 +97,7 @@ class PostgresDB(Base):
             )
             self._conn.commit()
         except psycopg2.IntegrityError:
-            self._conn.rollback()
             raise exc.WriteConflictError(f"user with name exists already: {user.name}")
-        except Exception as e:
-            self._conn.rollback()
-            raise e
-        finally:
-            cur.close()
 
     def delete_user(self, user_id: str):
         """Remove single user by id.
@@ -77,15 +105,7 @@ class PostgresDB(Base):
         :param user_id:
 
         """
-        cur = self._conn.cursor()
-        try:
-            cur.execute(f"DELETE FROM {self._T_USR} WHERE str_user_id = %s;", (user_id,))
-            self._conn.commit()
-        except Exception as e:
-            self._conn.rollback()
-            raise e
-        finally:
-            cur.close()
+        self._cur.execute(f"DELETE FROM {self._T_USR} WHERE str_user_id = %s;", (user_id,))
 
     def update_user(self, user_id: str, etag: str, name=None, password=None, metadata=None):
         """
@@ -117,17 +137,9 @@ class PostgresDB(Base):
             self._T_USR, "str_user_id", user_id, etag, update
         )
 
-        cur = self._conn.cursor()
-        try:
-            cur.execute(sql, values)
-            self._conn.commit()
-        except Exception as e:
-            self._conn.rollback()
-            raise e
-        finally:
-            cur.close()
+        self._cur.execute(sql, values)
 
-        if cur.rowcount != 1:
+        if self._cur.rowcount != 1:
             raise exc.WriteConflictError(f'failed to update user {user_id} {etag}')
 
         return new_tag
@@ -142,24 +154,24 @@ class PostgresDB(Base):
         sql, values = self._filter(query, self._T_USR, user_id=True, key=True)
         results = []
 
-        with self._conn.cursor() as cur:
-            cur.execute(sql, values)
+        self._cur.execute(sql, values)
 
-            for row in cur.fetchall():
-                results.append(domain.User.decode({
-                    k[k.index("_") + 1:]: v for k, v in row.items()
-                }))
+        for row in self._cur.fetchall():
+            results.append(domain.User.decode({
+                k[k.index("_") + 1:]: v for k, v in row.items()
+            }))
 
         return results
 
     INSERT_JOB = f"""INSERT INTO {_T_JOB} (
+      enum_state, 
       str_job_id, 
       str_user_id, 
       str_etag, 
       str_runner_id,
       str_key, 
       time_paused, 
-      json_metadata) VALUES (%s, %s, %s, %s, %s, %s, %s);"""
+      json_metadata) VALUES (%s, %s, %s, %s, %s, %s, %s, %s);"""
     INSERT_LYR = f"""INSERT INTO {_T_LYR} (
       str_job_id, 
       str_layer_id, 
@@ -176,6 +188,7 @@ class PostgresDB(Base):
       json_siblings, 
       json_children) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);"""
     INSERT_TSK = f"""INSERT INTO {_T_TSK} (
+      enum_state, 
       str_job_id, 
       str_layer_id, 
       str_task_id, 
@@ -187,7 +200,7 @@ class PostgresDB(Base):
       json_metadata, 
       json_cmd,
       json_env,
-      int_max_attempts) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);"""
+      int_max_attempts) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);"""
 
     def create_job(self, job: domain.Job, layers: list, tasks: list):
         """Insert a job, along with all layers & tasks.
@@ -213,7 +226,7 @@ class PostgresDB(Base):
                 l.key,
                 l.paused,
                 json.dumps(l.metadata),
-                l.state,
+                l.state or enums.State.PENDING.value,
                 l.priority,
                 l.order,
                 json.dumps(l.parents),
@@ -229,34 +242,26 @@ class PostgresDB(Base):
 
             task_data.append(self._task_creation_row(job.id, job.user_id, t))
 
-        cur = self._conn.cursor()
-        try:
-            cur.execute(
-                self.INSERT_JOB,
-                (
-                    job.id,
-                    job.user_id,
-                    job.etag,
-                    job.runner_id,
-                    job.key,
-                    job.paused,
-                    json.dumps(job.metadata)
-                )
+        self._cur.execute(
+            self.INSERT_JOB,
+            (
+                job.state or enums.State.PENDING.value,
+                job.id,
+                job.user_id,
+                job.etag,
+                job.runner_id,
+                job.key,
+                job.paused,
+                json.dumps(job.metadata)
             )
+        )
 
-            cur.executemany(self.INSERT_LYR, layer_data)
+        self._cur.executemany(self.INSERT_LYR, layer_data)
 
-            cur.executemany(self.INSERT_TSK, task_data)
-
-            self._conn.commit()
-        except Exception as e:
-            self._conn.rollback()
-            raise e
-        finally:
-            cur.close()
+        self._cur.executemany(self.INSERT_TSK, task_data)
 
     def update_job(
-        self, job_id: str, etag: str, runner_id=None, metadata=None, state=None, **kwargs
+            self, job_id: str, etag: str, runner_id=None, metadata=None, state=None, **kwargs
     ) -> str:
         """
 
@@ -292,20 +297,12 @@ class PostgresDB(Base):
             self._T_JOB, "str_job_id", job_id, etag, update
         )
 
-        cur = self._conn.cursor()
         try:
-            cur.execute(sql, values)
-            self._conn.commit()
+            self._cur.execute(sql, values)
         except psycopg2.DataError:
-            self._conn.rollback()
             raise exc.InvalidState(f"state {state} is not a permitted state")
-        except Exception as e:
-            self._conn.rollback()
-            raise e
-        finally:
-            cur.close()
 
-        if cur.rowcount != 1:
+        if self._cur.rowcount != 1:
             raise exc.WriteConflictError(f'failed to update job {job_id} {etag}')
 
         return new_tag
@@ -316,33 +313,24 @@ class PostgresDB(Base):
         :param job_id:
 
         """
-        cur = self._conn.cursor()
-        try:
-            cur.execute(  # firstly, set any worker working on this job to null
-                (
-                   f"UPDATE {self._T_WKR} "
-                   "SET "
-                   "str_job_id=null, "
-                   "str_layer_id=null, "
-                   "str_task_id=null, "
-                   "str_etag=%s, "
-                   "time_updated=%s "
-                   "WHERE str_job_id=%s;"
-                ),
-                (str(uuid.uuid4()), time.time(), job_id)
-            )
+        self._cur.execute(  # firstly, set any worker working on this job to null
+            (
+                f"UPDATE {self._T_WKR} "
+                "SET "
+                "str_job_id=null, "
+                "str_layer_id=null, "
+                "str_task_id=null, "
+                "str_etag=%s, "
+                "time_updated=%s "
+                "WHERE str_job_id=%s;"
+            ),
+            (str(uuid.uuid4()), time.time(), job_id)
+        )
 
-            # now we can delete Tasks, Layers & finally the Job.
-            cur.execute(f"DELETE FROM {self._T_TSK} WHERE str_job_id=%s;", (job_id,))
-            cur.execute(f"DELETE FROM {self._T_LYR} WHERE str_job_id=%s;", (job_id,))
-            cur.execute(f"DELETE FROM {self._T_JOB} WHERE str_job_id=%s;", (job_id,))
-
-            self._conn.commit()
-        except Exception as e:
-            self._conn.rollback()
-            raise e
-        finally:
-            cur.close()
+        # now we can delete Tasks, Layers & finally the Job.
+        self._cur.execute(f"DELETE FROM {self._T_TSK} WHERE str_job_id=%s;", (job_id,))
+        self._cur.execute(f"DELETE FROM {self._T_LYR} WHERE str_job_id=%s;", (job_id,))
+        self._cur.execute(f"DELETE FROM {self._T_JOB} WHERE str_job_id=%s;", (job_id,))
 
     def get_jobs(self, query: domain.Query) -> list:
         """Return all jobs matching the given query.
@@ -356,13 +344,12 @@ class PostgresDB(Base):
         )
 
         results = []
-        with self._conn.cursor() as cur:
-            cur.execute(sql, values)
+        self._cur.execute(sql, values)
 
-            for row in cur.fetchall():
-                results.append(domain.Job.decode({
-                    k[k.index("_") + 1:]: v for k, v in row.items()
-                }))
+        for row in self._cur.fetchall():
+            results.append(domain.Job.decode({
+                k[k.index("_") + 1:]: v for k, v in row.items()
+            }))
 
         return results
 
@@ -377,23 +364,14 @@ class PostgresDB(Base):
             "WHERE str_job_id IN (%s);" % ", ".join(["%s"] * len(job_ids))
         )
 
-        cur = self._conn.cursor()
         try:
-            cur.execute(sql, job_ids)
-
-            self._conn.commit()
+            self._cur.execute(sql, job_ids)
         except psycopg2.IntegrityError:
-            self._conn.rollback()
             raise exc.ChildExists("child layer(s) exist: unable to delete")
-        except Exception as e:
-            self._conn.rollback()
-            raise e
-        finally:
-            cur.close()
 
     def update_layer(
         self, layer_id: str, etag: str, priority=None, state=None, runner_id=None,
-            metadata=None, **kwargs
+        metadata=None, **kwargs
     ) -> str:
         """
 
@@ -434,20 +412,13 @@ class PostgresDB(Base):
             self._T_LYR, "str_layer_id", layer_id, etag, update
         )
 
-        cur = self._conn.cursor()
         try:
-            cur.execute(sql, values)
+            self._cur.execute(sql, values)
             self._conn.commit()
         except psycopg2.DataError:
-            self._conn.rollback()
             raise exc.InvalidState(f"state {state} is not a permitted state")
-        except Exception as e:
-            self._conn.rollback()
-            raise e
-        finally:
-            cur.close()
 
-        if cur.rowcount != 1:
+        if self._cur.rowcount != 1:
             raise exc.WriteConflictError(f'failed to update layer {layer_id} {etag}')
 
         return new_tag
@@ -470,13 +441,12 @@ class PostgresDB(Base):
         )
 
         results = []
-        with self._conn.cursor() as cur:
-            cur.execute(sql, values)
+        self._cur.execute(sql, values)
 
-            for row in cur.fetchall():
-                results.append(domain.Layer.decode({
-                    k[k.index("_") + 1:]: v for k, v in row.items()
-                }))
+        for row in self._cur.fetchall():
+            results.append(domain.Layer.decode({
+                k[k.index("_") + 1:]: v for k, v in row.items()
+            }))
 
         return results
 
@@ -500,21 +470,14 @@ class PostgresDB(Base):
         for t in tasks:
             task_data.append(self._task_creation_row(job_id, user_id, t, layer_id=layer_id))
 
-        cur = self._conn.cursor()
         try:
-            cur.executemany(self.INSERT_TSK, task_data)
-            self._conn.commit()
+            self._cur.executemany(self.INSERT_TSK, task_data)
         except psycopg2.IntegrityError:
             raise exc.WriteConflictError(
                 f"integrity err: failed to create tasks for layer: {layer_id}"
             )
-        except Exception as e:
-            self._conn.rollback()
-            raise e
-        finally:
-            cur.close()
 
-        if cur.rowcount != len(tasks):
+        if self._cur.rowcount != len(tasks):
             raise exc.WriteConflictError(f'failed to create tasks for layer: {layer_id}')
 
     @staticmethod
@@ -537,14 +500,15 @@ class PostgresDB(Base):
         raise exc.InvalidArg(f"result type unsupported {type(value)}")
 
     def update_task(
-        self,
-        task_id: str,
-        etag: str,
-        runner_id=None,
-        metadata=None,
-        state=None,
-        attempts=None,
-        **kwargs
+            self,
+            task_id: str,
+            etag: str,
+            runner_id=None,
+            metadata=None,
+            state=None,
+            attempts=None,
+            env=None,
+            **kwargs
     ) -> str:
         """
 
@@ -554,6 +518,7 @@ class PostgresDB(Base):
         :param metadata:
         :param state:
         :param attempts:
+        :param env:
         :param result:
         :param worker_id:
         :return: str
@@ -570,6 +535,7 @@ class PostgresDB(Base):
             ("json_metadata", json.dumps(metadata) if metadata else None),
             ("enum_state", state),
             ("int_attempts", attempts),
+            ("json_env", json.dumps(env) if env else None),
         ]:
             if v is None:
                 continue
@@ -589,20 +555,12 @@ class PostgresDB(Base):
             self._T_TSK, "str_task_id", task_id, etag, update
         )
 
-        cur = self._conn.cursor()
         try:
-            cur.execute(sql, values)
-            self._conn.commit()
+            self._cur.execute(sql, values)
         except psycopg2.DataError:
-            self._conn.rollback()
             raise exc.InvalidState(f"state {state} is not a permitted state")
-        except Exception as e:
-            self._conn.rollback()
-            raise e
-        finally:
-            cur.close()
 
-        if cur.rowcount != 1:
+        if self._cur.rowcount != 1:
             raise exc.WriteConflictError(f'failed to update task {task_id} {etag}')
 
         return new_tag
@@ -614,7 +572,9 @@ class PostgresDB(Base):
         :return: []domain.Task
 
         """
-        sql, values = self._filter(
+        tasks = {}
+
+        sql, values = self._filter(  # fetch task data
             query,
             self._T_TSK,
             job_id=True,
@@ -624,17 +584,28 @@ class PostgresDB(Base):
             key=True,
             user_id=True,
         )
+        self._cur.execute(sql, values)
+        for row in self._cur.fetchall():
+            data = {k[k.index("_") + 1:]: v for k, v in row.items()}
+            tasks[data["task_id"]] = data
+
+        records = collections.defaultdict(list)
+        sql, values = self._filter(  # fetch record data
+            query,
+            self._T_REC,
+            task_id=True,
+        )
+        self._cur.execute(sql, values)
+        for row in self._cur.fetchall():
+            data = {k[k.index("_") + 1:]: v for k, v in row.items()}
+            records[data["task_id"]].append(data)
 
         results = []
-        with self._conn.cursor() as cur:
-            cur.execute(sql, values)
-
-            for row in cur.fetchall():
-                t = domain.Task.decode({
-                    k[k.index("_") + 1:]: v for k, v in row.items()
-                })
-                t.result = bytes(t.result) if t.result else None
-                results.append(t)
+        for task_id, task_data in tasks.items():
+            t = domain.Task.decode(task_data)
+            t.result = str(bytes(t.result), encoding="utf8") if t.result else None
+            t.records = records.get(task_id, [])
+            results.append(t)
 
         return results
 
@@ -656,13 +627,12 @@ class PostgresDB(Base):
         )
 
         results = []
-        with self._conn.cursor() as cur:
-            cur.execute(sql, values)
+        self._cur.execute(sql, values)
 
-            for row in cur.fetchall():
-                results.append(domain.Worker.decode({
-                    k[k.index("_") + 1:]: v for k, v in row.items()
-                }))
+        for row in self._cur.fetchall():
+            results.append(domain.Worker.decode({
+                k[k.index("_") + 1:]: v for k, v in row.items()
+            }))
 
         return results
 
@@ -672,9 +642,8 @@ class PostgresDB(Base):
         :return: int
 
         """
-        with self._conn.cursor() as cur:
-            cur.execute(f"SELECT count(*) FROM {self._T_WKR} WHERE str_task_id is null;")
-            return cur.fetchone()[0]
+        self._cur.execute(f"SELECT count(*) FROM {self._T_WKR} WHERE str_task_id is null;")
+        return self._cur.fetchone()[0]
 
     def idle_workers(self, limit: int = _DEFAULT_LIMIT, offset: int = 0) -> list:
         """Return all idle workers, obeying the given limits.
@@ -686,21 +655,20 @@ class PostgresDB(Base):
         """
         results = []
 
-        with self._conn.cursor() as cur:
-            cur.execute(
-                (
-                    f"SELECT * FROM {self._T_WKR} "
-                    f"WHERE str_task_id is null "
-                    f"ORDER BY time_created "
-                    f"LIMIT %s OFFSET %s;"
-                ),
-                (limit, offset)
-            )
+        self._cur.execute(
+            (
+                f"SELECT * FROM {self._T_WKR} "
+                f"WHERE str_task_id is null "
+                f"ORDER BY time_created "
+                f"LIMIT %s OFFSET %s;"
+            ),
+            (limit, offset)
+        )
 
-            for row in cur.fetchall():
-                results.append(domain.Worker.decode({
-                    k[k.index("_") + 1:]: v for k, v in row.items()
-                }))
+        for row in self._cur.fetchall():
+            results.append(domain.Worker.decode({
+                k[k.index("_") + 1:]: v for k, v in row.items()
+            }))
 
         return results
 
@@ -718,18 +686,10 @@ class PostgresDB(Base):
         :return: str
 
         """
-        cur = self._conn.cursor()
-        try:
-            cur.execute(
-                self.INSERT_WKR,
-                (worker.id, worker.etag, worker.key, worker.host, json.dumps(worker.metadata))
-            )
-            self._conn.commit()
-        except Exception as e:
-            self._conn.rollback()
-            raise e
-        finally:
-            cur.close()
+        self._cur.execute(
+            self.INSERT_WKR,
+            (worker.id, worker.etag, worker.key, worker.host, json.dumps(worker.metadata))
+        )
 
     def delete_worker(self, id_: str):
         """Delete a worker from the database.
@@ -739,28 +699,19 @@ class PostgresDB(Base):
         :param id_:
 
         """
-        cur = self._conn.cursor()
-        try:
-            cur.execute(  # firstly, set any worker working on this job to null
-                (
-                   f"UPDATE {self._T_TSK} "
-                   "SET "
-                   "str_worker_id=null, "
-                   "str_etag=%s, "
-                   "time_updated=%s "
-                   "WHERE str_worker_id=%s;"
-                ),
-                (str(uuid.uuid4()), time.time(), id_)
-            )
+        self._cur.execute(  # firstly, set any worker working on this job to null
+            (
+                f"UPDATE {self._T_TSK} "
+                "SET "
+                "str_worker_id=null, "
+                "str_etag=%s, "
+                "time_updated=%s "
+                "WHERE str_worker_id=%s;"
+            ),
+            (str(uuid.uuid4()), time.time(), id_)
+        )
 
-            cur.execute(f"DELETE FROM {self._T_WKR} WHERE str_worker_id=%s;", (id_,))
-
-            self._conn.commit()
-        except Exception as e:
-            self._conn.rollback()
-            raise e
-        finally:
-            cur.close()
+        self._cur.execute(f"DELETE FROM {self._T_WKR} WHERE str_worker_id=%s;", (id_,))
 
     def update_worker(
         self,
@@ -811,23 +762,15 @@ class PostgresDB(Base):
             self._T_WKR, "str_worker_id", worker_id, etag, update
         )
 
-        cur = self._conn.cursor()
-        try:
-            cur.execute(sql, values)
-            self._conn.commit()
-        except Exception as e:
-            self._conn.rollback()
-            raise e
-        finally:
-            cur.close()
+        self._cur.execute(sql, values)
 
-        if cur.rowcount != 1:
+        if self._cur.rowcount != 1:
             raise exc.WriteConflictError(f'failed to update worker {worker_id} {etag}')
 
         return new_tag
 
     @staticmethod
-    def _task_creation_row(job_id:str, user_id: str, t: domain.Task, layer_id=None) -> tuple:
+    def _task_creation_row(job_id: str, user_id: str, t: domain.Task, layer_id=None) -> tuple:
         """Return data formatted for writing into db.
 
         :param job_id:
@@ -837,6 +780,7 @@ class PostgresDB(Base):
 
         """
         return (
+            t.state or enums.State.PENDING.value,
             job_id,
             layer_id or t.layer_id,
             t.id,
@@ -926,7 +870,7 @@ class PostgresDB(Base):
         :return: str, list
 
         """
-        q.limit = min([cls._MAX_LIMIT, q.limit])
+        q.limit = min([_MAX_LIMIT, q.limit])
         sort_by = cls._sort_column(q.sorting)
 
         if not q.filters:
@@ -939,9 +883,9 @@ class PostgresDB(Base):
                 ), [q.user_id, q.limit, q.offset]
 
             return (
-               f"SELECT * FROM {table_name} "
-               f"ORDER BY {sort_by} "
-               "LIMIT %s OFFSET %s;"
+                f"SELECT * FROM {table_name} "
+                f"ORDER BY {sort_by} "
+                "LIMIT %s OFFSET %s;"
             ), [q.limit, q.offset]
 
         ors = []
@@ -985,8 +929,285 @@ class PostgresDB(Base):
             where = "WHERE " + " OR ".join(ors)
 
         return (
-            f"SELECT * FROM {table_name} "
-            f"{where} "
-            f"ORDER BY {sort_by} "
-            "LIMIT %s OFFSET %s;"
-        ), values + [q.limit, q.offset]
+           f"SELECT * FROM {table_name} "
+           f"{where} "
+           f"ORDER BY {sort_by} "
+           "LIMIT %s OFFSET %s;"
+       ), values + [q.limit, q.offset]
+
+
+class PostgresDB(Base):
+    # database
+    _DB = "igor"
+
+    def __init__(self, host='database', port=5432):
+        self._conn = psycopg2.connect(
+            host=host,
+            port=port,
+            database=self._DB,
+            user="postgres",
+            cursor_factory=DictCursor,
+        )
+
+    def create_task_record(self, tsk: domain.Task, wkr_id: str, state, reason=""):
+        """
+
+        :param tsk:
+        :param wkr_id:
+        :param state:
+        :param reason:
+
+        """
+        with self.transaction() as t:
+            t.create_task_record(tsk, wkr_id, state, reason=reason)
+
+    def transaction(self):
+        """
+
+        """
+        return _Transaction(self._conn)
+
+    def create_job(self, job: domain.Job, layers: list, tasks: list):
+        """
+
+        :param job:
+        :param layers:
+        :param tasks:
+
+        """
+        with self.transaction() as t:
+            return t.create_job(job, layers, tasks)
+
+    def update_job(
+        self,
+        job_id: str,
+        etag: str,
+        **kwargs,
+    ) -> str:
+        """
+
+        :param job_id:
+        :param etag:
+        :param runner_id:
+        :param metadata:
+        :param state:
+        :param paused:
+        :return: str
+
+        """
+        with self.transaction() as t:
+            return t.update_job(job_id, etag, **kwargs)
+
+    def force_delete_job(self, job_id: str):
+        """Delete job, it's layers & tasks.
+
+        :param job_id:
+
+        """
+        with self.transaction() as t:
+            return t.force_delete_job(job_id)
+
+    def get_jobs(self, query: domain.Query) -> list:
+        """
+
+        :param query:
+        :return: list
+
+        """
+        with self.transaction() as t:
+            return t.get_jobs(query)
+
+    def delete_jobs(self, job_ids: list):
+        """
+
+        :param job_ids:
+
+        """
+        with self.transaction() as t:
+            return t.delete_jobs(job_ids)
+
+    def update_layer(
+        self,
+        layer_id: str,
+        etag: str,
+        **kwargs,
+    ) -> str:
+        """
+
+        :param layer_id:
+        :param etag:
+        :param priority:
+        :param state:
+        :param runner_id:
+        :param metadata:
+        :param paused:
+        :return: str
+
+        """
+        with self.transaction() as t:
+            return t.update_layer(layer_id, etag, **kwargs)
+
+    def get_layers(self, query: domain.Query) -> list:
+        """
+
+        :param query:
+        :return: list
+
+        """
+        with self.transaction() as t:
+            return t.get_layers(query)
+
+    def create_tasks(self, layer_id: str, tasks: list):
+        """
+
+        :param layer_id:
+        :param tasks:
+
+        """
+        with self.transaction() as t:
+            return t.create_tasks(layer_id, tasks)
+
+    def update_task(
+        self,
+        task_id: str,
+        etag: str,
+        **kwargs,
+    ) -> str:
+        """
+
+        :param task_id:
+        :param etag:
+        :param worker_id:
+        :param runner_id:
+        :param metadata:
+        :param state:
+        :param attempts:
+        :param paused:
+        :param env:
+        :return: str
+
+        """
+        with self.transaction() as t:
+            return t.update_task(task_id, etag, **kwargs)
+
+    def get_tasks(self, query: domain.Query) -> list:
+        """
+
+        :param query:
+        :return: list
+
+        """
+        with self.transaction() as t:
+            return t.get_tasks(query)
+
+    def get_workers(self, query: domain.Query) -> list:
+        """
+
+        :param query:
+        :return: list
+
+        """
+        with self.transaction() as t:
+            return t.get_workers(query)
+
+    def idle_worker_count(self) -> int:
+        """
+
+        :return: list
+
+        """
+        with self.transaction() as t:
+            return t.idle_worker_count()
+
+    def idle_workers(self, limit: int=_DEFAULT_LIMIT, offset: int=0) -> list:
+        """
+
+        :param limit:
+        :param offset:
+        :return: list
+
+        """
+        with self.transaction() as t:
+            return t.idle_workers(limit=limit, offset=offset)
+
+    def create_worker(self, worker: domain.Worker):
+        """Create worker in system with given data.
+
+        :param worker:
+
+        """
+        with self.transaction() as t:
+            return t.create_worker(worker)
+
+    def delete_worker(self, id_: str):
+        """Remove worker with matching id.
+
+        :param id_:
+
+        """
+        with self.transaction() as t:
+            t.delete_worker(id_)
+
+    def update_worker(
+        self,
+        worker_id: str,
+        etag: str,
+        **kwargs
+    ) -> str:
+        """
+
+        :param worker_id:
+        :param etag:
+        :param job_id:
+        :param layer_id:
+        :param task_id:
+        :param task_started:
+        :param task_finished:
+        :param last_ping:
+        :param metadata:
+        :return: str
+
+        """
+        with self.transaction() as t:
+            return t.update_worker(worker_id, etag, **kwargs)
+
+    def create_user(self, user: domain.User):
+        """Create user.
+
+        :param user:
+
+        """
+        with self.transaction() as t:
+            return t.create_user(user)
+
+    def delete_user(self, user_id: str):
+        """Delete user.
+
+        :param user_id:
+
+        """
+        with self.transaction() as t:
+            return t.delete_user(user_id)
+
+    def update_user(self, user_id: str, etag: str, **kwargs):
+        """Update single user instance.
+
+        :param user_id:
+        :param etag:
+        :param name:
+        :param password: this should be the *hashed* password.
+        :param metadata:
+
+        """
+        with self.transaction() as t:
+            return t.update_user(user_id, etag, **kwargs)
+
+    def get_users(self, query: domain.Query) -> list:
+        """Get users workers matching query.
+
+        :param query:
+        :return: list
+
+        """
+        with self.transaction() as t:
+            return t.get_users(query)

@@ -46,66 +46,7 @@ def _final_priority(base: int) -> int:
     ])
 
 
-class _Lock:
-    """Simple distributed lock using Redis.
-
-    From: https://chris-lamb.co.uk/posts/distributing-locking-python-and-redis
-    """
-
-    def __init__(self, conn, key, expires=60, timeout=10):
-        """
-        Distributed locking using Redis SETNX and GETSET.
-
-        Usage::
-
-            with Lock('my_lock'):
-                print "Critical section"
-
-        :param  expires     We consider any existing lock older than
-                            ``expires`` seconds to be invalid in order to
-                            detect crashed clients. This value must be higher
-                            than it takes the critical section to execute.
-        :param  timeout     If another client has already obtained the lock,
-                            sleep for a maximum of ``timeout`` seconds before
-                            giving up. A value of 0 means we never wait.
-        """
-        self._conn = conn
-        self.key = "lock:" + str(key)
-        self.timeout = timeout
-        self.expires = expires
-
-    def __enter__(self):
-        timeout = self.timeout
-        while timeout >= 0:
-            expires = float(time.time() + self.expires + 1)
-
-            if self._conn.setnx(self.key, expires):
-                # We gained the lock; enter critical section
-                return
-
-            current_value = float(self._conn.get(self.key))
-
-            if all([
-                current_value,
-                current_value < time.time(),
-                self._conn.getset(self.key, expires) == current_value,
-            ]):
-                # We found an expired lock and nobody raced us to replacing it
-                return
-
-            timeout -= 1
-            time.sleep(1)
-
-        raise LockTimeout(f"Timeout whilst waiting for lock: {self.key}")
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self._conn.delete(self.key)
-
-
-class LockTimeout(Exception):
-    """We timed out trying to get the lock.
-
-    """
+class UnsupportedRedisVersion(Exception):
     pass
 
 
@@ -117,9 +58,14 @@ class TaskQueue:
 
     """
 
-    def __init__(self, host: str="redis", port: int=6379, lock_timeout: int=5):
+    def __init__(self, host: str="redis", port: int=6379):
         self._conn = redis.Redis(db=0, host=host, port=port)
-        self._lock_timeout = lock_timeout
+
+        info = self._conn.info()
+        if info.get("redis_version") < "5.0.0":
+            # zpopmin and bzpopmin are were added redis ~v5. We can approximate zpopmin using
+            # some locks, but it's cleaner & simpler to use a higher redis version.
+            raise UnsupportedRedisVersion(f"Require redis 5+: info={info}")
 
     @classmethod
     def _key(cls, queue: str) -> str:
@@ -149,25 +95,13 @@ class TaskQueue:
 
         :param queue:
         :return: str or None
-        :raises LockTimeout: if we can't get the queue lock fast enough.
 
         """
         name = self._key(queue)
-
-        with _Lock(self._conn, name, timeout=self._lock_timeout):
-            # lock approximates atomic 'zpop' which doesn't exist in redis ie. pop(0)
-            value = self._conn.zrangebyscore(
-                name,
-                _LIMIT_LOWER, _upper_limit(),  # range of possible values (ie. all of them)
-                start=_LIMIT_LOWER, num=1,  # analogous to 'offset 0, limit 1'
-                score_cast_func=int  # cast result to int
-            )
-
-            if not value:
-                return None  # queue is empty
-
-            self._conn.zrem(name, value[0])
-            return str(value[0], encoding='utf8')
+        value = self._conn.zpopmin(name)
+        if not value:
+            return None
+        return str(value[0][0], encoding="utf8")
 
     def count(self, queue: str) -> int:
         """Return the number of items in the given queue.

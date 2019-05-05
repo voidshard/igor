@@ -8,7 +8,7 @@ from igorUI.ui.widgets.widget import (
     AlnumSortProxyModel
 )
 from igorUI.ui.manifest import QVBoxLayout, Qt
-from igorUI import client
+from igorUI import service
 from igorUI.ui.events import Events
 
 
@@ -20,6 +20,16 @@ class WorkerPanel(ClosablePanel):
         self.setWidget(_WorkerWidget(self))
         self.setWindowTitle("Workers")
         self.set_title("Workers")
+
+    @property
+    def default_dock_widget_area(self):
+        """Return where this widget should be placed by default, relative to
+        the dock widget it belongs to.
+
+        Returns:
+            int
+        """
+        return Qt.BottomDockWidgetArea
 
 
 class _WorkerWidget(PanelWidget):
@@ -85,6 +95,8 @@ class _WorkerWidget(PanelWidget):
         Args:
             index (QIndex):
         """
+        self.__itemClicked(index)
+
         obj = index.data(self._model.ObjectRole)
         Events.OpenDetails.emit("worker", obj.id)
 
@@ -130,7 +142,7 @@ class _WorkerModel(AbstractEditableTableModel):
             []Worker
         """
         try:
-            for i in client.Service.get_workers():
+            for i in service.Service.get_workers():
                 yield i
         except Exception as e:
             Events.Status.emit(f"unable to fetch worker information: {e}")

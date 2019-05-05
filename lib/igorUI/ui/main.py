@@ -1,6 +1,5 @@
 import functools
 import sys
-import uuid
 
 from igorUI import utils
 from igorUI.ui import resources
@@ -54,6 +53,7 @@ class MainWindow(QMainWindow):
         self._add_shortcut("layers", "Ctrl+l", functools.partial(self.__open_panel, LayerPanel))
         self._add_shortcut("tasks", "Ctrl+t", functools.partial(self.__open_panel, TaskPanel))
         self._add_shortcut("workers", "Ctrl+w", functools.partial(self.__open_panel, WorkerPanel))
+        self._add_shortcut("new", "Ctrl+n", functools.partial(self.__open_new_job_popup))
 
         Events.OpenDetails.connect(self.__open_details)
 
@@ -63,6 +63,9 @@ class MainWindow(QMainWindow):
 
     def __exit(self):
         sys.exit(0)
+
+    def __open_new_job_popup(self):
+        pass
 
     def __open_details(self, classname, obj_id):
         """
