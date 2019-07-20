@@ -71,7 +71,9 @@ services:
 
   # --- igor internal services ---
   scheduler:
-    build: docker/scheduler/
+    build:
+      context: ./
+      dockerfile: Dockerfile.scheduler
     environment:
       - IGOR_CONFIG=/opt/igor/etc/igor-docker.ini
       - IGOR_DEFAULT_ADMIN_USERS=admin:admin
@@ -81,13 +83,13 @@ services:
     links:
       - database
       - queue
-    volumes:
-      - ./:/opt/igor
     networks:
         - internal
 
   daemon:
-    build: docker/daemon/
+    build:
+      context: ./
+      dockerfile: Dockerfile.daemon
     environment:
       - IGOR_CONFIG=/opt/igor/etc/igor-docker.ini
     depends_on:
@@ -96,14 +98,14 @@ services:
     links:
       - database
       - queue
-    volumes:
-      - ./:/opt/igor
     networks:
         - internal
 
   # --- igor API gateway ---
   igor:
-    build: docker/gateway/
+    build:
+      context: ./
+      dockerfile: Dockerfile.gateway
     ports:
       - 9025:9025
     environment:
@@ -116,8 +118,6 @@ services:
     links:
       - database
       - queue
-    volumes:
-      - ./:/opt/igor
     ports:
       - 9025:9025
     networks:
