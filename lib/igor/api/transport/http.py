@@ -6,6 +6,8 @@ import json
 from flask import Flask, request, redirect
 from functools import wraps
 
+from gevent.pywsgi import WSGIServer
+
 from igor import domain
 from igor import exceptions as exc
 from igor import utils
@@ -461,9 +463,5 @@ class HttpTransport(Base):
 
         logger.info(f"ssl context: {self._ssl_context}")
 
-        self._app.run(
-            host='0.0.0.0',
-            port=self._port,
-            threaded=True,
-            ssl_context=self._ssl_context,
-        )
+        http_server = WSGIServer(('', self._port), self._app)
+        http_server.serve_forever()
