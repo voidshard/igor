@@ -702,7 +702,7 @@ class SchedulerTest:
         {"layer_paused": True},
         {"tasks_paused": True},
     ])
-    def test_queue_work_igores_paused(self, kwargs):
+    def test_queue_work_ignores_paused(self, kwargs):
         # arrange
         job, _, _ = self._job(layer_state=enums.State.QUEUED.value, **kwargs)
         _ = [self._worker(), self._worker()]
@@ -720,8 +720,9 @@ class SchedulerTest:
         running_layers = [l for l in layers if l.state == enums.State.RUNNING.value]
         running_jobs = [j for j in jobs if j.state == enums.State.RUNNING.value]
 
-        assert not running_jobs
-        assert not running_layers
+        if "tasks_paused" not in kwargs:
+            assert not running_jobs
+            assert not running_layers
         assert not queued_tasks
         assert self.runner.queued_tasks() == 0
 
