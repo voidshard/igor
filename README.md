@@ -31,12 +31,27 @@ If you're after realtime task execution and / or don't need workflows at all: Ig
 
 The project is python3.
 
-At the moment the only dependencies are:
+At the moment the core dependencies are:
 ```bash
-pip install psycopg2 redis psutil Flask pyopenssl
+pip install psycopg2 redis psutil Flask pyopenssl gevent
 ``` 
 
-If you're planning on running the test suite you'll need docker too. Docker & docker compose files are included. 
+Just once, you'll need to setup the database before kicking off Igor. A simple schema to get you started is included. You'll want to run something like
+```bash
+psql -p <port> -h <host> -U <user> -f ./ddl/postgres/schema_template.sql igor 
+```
+
+
+If you're planning on running the test suite you'll need docker & pytest too. Docker & docker compose files are included.
+```bash
+pip install docker pytest
+```
+
+
+The PyQt5 UI which requires, in addition 
+```bash
+pip install pyqt5 requests
+```
 
 ## Concepts
 
