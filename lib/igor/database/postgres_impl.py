@@ -2,6 +2,8 @@ import collections
 import time
 import json
 import uuid
+import sys
+import random
 
 import psycopg2
 from psycopg2.extras import DictCursor
@@ -939,15 +941,30 @@ class _Transaction(TransactionBase):
 class PostgresDB(Base):
     # database
     _DB = "igor"
+    _CONNECT_ATTEMPTS = 3
 
-    def __init__(self, host='database', port=5432):
-        self._conn = psycopg2.connect(
-            host=host,
-            port=port,
-            database=self._DB,
-            user="postgres",
-            cursor_factory=DictCursor,
-        )
+    def __init__(self, host='database', port=5432, user="postgres"):
+        self._host = host
+        self._port = port
+        self._user = user
+        self.__conn = None
+
+    @property
+    def _conn(self):
+        if not self.__conn:
+            for i in range(0, max([1, self._CONNECT_ATTEMPTS])):
+                try:
+                    self.__conn = psycopg2.connect(
+                        host=self._host,
+                        port=self._port,
+                        database=self._DB,
+                        user=self._user,
+                        cursor_factory=DictCursor,
+                    )
+                except Exception as e:
+                    print("Error connecting to database:", str(e), file=sys.stderr)
+                    time.sleep((2 ** i) + (random.randint(0, 1000) / 1000.0))
+        return self.__conn
 
     def create_task_record(self, tsk: domain.Task, wkr_id: str, state, reason=""):
         """

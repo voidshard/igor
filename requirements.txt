@@ -3,3 +3,5 @@ Flask
 psycopg2
 psutil
 pyopenssl
+requests
+pytest
