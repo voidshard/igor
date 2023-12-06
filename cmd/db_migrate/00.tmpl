@@ -13,14 +13,8 @@ CREATE SCHEMA IF NOT EXISTS igor;
 
 GRANT USAGE ON SCHEMA igor TO igorreadwrite;
 ALTER USER igorreadwrite SET search_path='igor';
-
 GRANT USAGE ON SCHEMA igor TO igorreadonly;
 ALTER USER igorreadonly SET search_path='igor';
-
-GRANT SELECT ON ALL TABLES IN SCHEMA igor TO igorreadonly;
-GRANT SELECT ON ALL SEQUENCES IN SCHEMA igor TO igorreadonly;
-GRANT ALL ON ALL TABLES IN SCHEMA igor TO igorreadwrite;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA igor TO igorreadwrite;
 
 SET search_path TO igor;
 
@@ -73,6 +67,8 @@ CREATE OR REPLACE FUNCTION create_partition_and_insert() RETURNS trigger AS $$
         ELSIF (TG_TABLE_NAME = LOWER('${TABLE_TASKS}')) THEN
             EXECUTE 'CREATE TRIGGER ' || partition || '_notify_event AFTER INSERT OR UPDATE OR DELETE ON ' || partition || ' FOR EACH ROW EXECUTE PROCEDURE notify_event();';
         END IF;
+        EXECUTE 'GRANT SELECT ON TABLE ' || partition || ' TO igorreadonly;';
+        EXECUTE 'GRANT ALL ON TABLE ' || partition || ' TO igorreadwrite;';
       END IF;
       EXECUTE 'INSERT INTO ' || partition || ' SELECT(' || TG_TABLE_NAME || ' ' || quote_literal(NEW) || ').*;';
       RETURN NULL;
@@ -141,3 +137,6 @@ CREATE TABLE IF NOT EXISTS ${TABLE_RUNS} (
             CONSTRAINT fk_layer_id FOREIGN KEY (task_id) REFERENCES ${TABLE_TASKS}(id) ON DELETE CASCADE
 ) WITH (OIDS=FALSE);
 CREATE OR REPLACE TRIGGER ${TABLE_RUNS}_partition_trigger BEFORE INSERT ON ${TABLE_RUNS} FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();
+
+GRANT SELECT ON ALL TABLES IN SCHEMA igor TO igorreadonly;
+GRANT ALL ON ALL TABLES IN SCHEMA igor TO igorreadwrite;

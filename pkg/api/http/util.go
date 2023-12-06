@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	hp "net/http"
 
 	ie "github.com/voidshard/igor/pkg/errors"
@@ -55,7 +54,7 @@ func unmarshalJson(w hp.ResponseWriter, r *hp.Request, obj interface{}) error {
 	err := d.Decode(obj)
 	if err != nil {
 		// bad JSON or unrecognized json field
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		hp.Error(w, err.Error(), hp.StatusBadRequest)
 		return fmt.Errorf("bad json: %v", err)
 	}
 

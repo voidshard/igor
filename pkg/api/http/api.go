@@ -30,6 +30,7 @@ func (s *Server) ServeForever(svc api.API) error {
 	s.svc = svc
 
 	go func() {
+		log.Println("Listening on", s.httpserver.Addr)
 		if err := s.httpserver.ListenAndServe(); err != nil {
 			log.Println(err)
 		}
@@ -58,6 +59,22 @@ func (s *Server) Jobs(w hp.ResponseWriter, r *hp.Request) {
 }
 
 func (s *Server) createJob(w hp.ResponseWriter, r *hp.Request) {
+	cjr := &structs.CreateJobRequest{}
+	err := unmarshalJson(w, r, cjr)
+	if err != nil {
+		return
+	}
+
+	resp, err := s.svc.CreateJob(cjr)
+	if err != nil {
+		hp.Error(w, err.Error(), mapError(err))
+		return
+	}
+
+	err = json.NewEncoder(w).Encode(resp)
+	if err != nil {
+		hp.Error(w, err.Error(), hp.StatusInternalServerError)
+	}
 }
 
 func (s *Server) getJobs(w hp.ResponseWriter, r *hp.Request) {
@@ -73,7 +90,10 @@ func (s *Server) getJobs(w hp.ResponseWriter, r *hp.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(jobs)
+	err = json.NewEncoder(w).Encode(jobs)
+	if err != nil {
+		hp.Error(w, err.Error(), hp.StatusInternalServerError)
+	}
 }
 
 func (s *Server) Close() error {
@@ -85,7 +105,7 @@ func (s *Server) Health(w hp.ResponseWriter, r *hp.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-func NewServer(addr string) *Server {
+func NewServer(addr string, debug bool) *Server {
 	router := mux.NewRouter()
 
 	me := &Server{
@@ -100,6 +120,10 @@ func NewServer(addr string) *Server {
 
 	router.HandleFunc("/healthz", me.Health).Methods(hp.MethodGet)
 	router.HandleFunc("/api/v1/jobs", me.Jobs).Methods(hp.MethodGet, hp.MethodPost)
+	if debug {
+		log.Println("Debug enabled, adding per-request logging middleware")
+		router.Use(loggingMiddleware)
+	}
 
 	return me
 }

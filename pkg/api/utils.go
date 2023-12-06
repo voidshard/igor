@@ -1,4 +1,4 @@
-package core
+package api
 
 import (
 	"fmt"
@@ -19,7 +19,7 @@ func runnableJobLayers(layers []*structs.Layer) (structs.Status, []*structs.Laye
 	canRun := []*structs.Layer{}
 	var lowest int64
 	for _, l := range layers {
-		if isFinalStatus(l.Status) {
+		if structs.IsFinalStatus(l.Status) {
 			done++
 			continue
 		}
@@ -42,15 +42,6 @@ func layerCanHaveMoreTasks(layer *structs.Layer) bool {
 		return true
 	case structs.RUNNING:
 		return layer.PausedAt > 0
-	default:
-		return false
-	}
-}
-
-func isFinalStatus(status structs.Status) bool {
-	switch status {
-	case structs.COMPLETED, structs.SKIPPED, structs.ERRORED:
-		return true
 	default:
 		return false
 	}

@@ -6,8 +6,6 @@ import (
 
 // API represents the functions Igor servers should expose.
 type API interface {
-	// Implemented in igor/internal/core.Service
-
 	CreateJob(cjr *structs.CreateJobRequest) (*structs.CreateJobResponse, error)
 	CreateTasks(in []*structs.CreateTaskRequest) ([]*structs.Task, error)
 

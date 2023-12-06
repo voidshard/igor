@@ -10,6 +10,7 @@ import (
 
 	"github.com/hibiken/asynq"
 
+	"github.com/voidshard/igor/pkg/database"
 	"github.com/voidshard/igor/pkg/structs"
 )
 
@@ -29,7 +30,7 @@ type Asynq struct {
 	cli *asynq.Client
 
 	// the funcs we're allowed to call inside of igor
-	svc Service
+	svc database.QueueDB
 
 	// if register is called we're intended to start a server
 	lock sync.Mutex
@@ -37,7 +38,7 @@ type Asynq struct {
 	srv  *asynq.Server
 }
 
-func NewAsynqQueue(svc Service, opts *Options) (*Asynq, error) {
+func NewAsynqQueue(svc database.QueueDB, opts *Options) (*Asynq, error) {
 	ins := asynq.NewInspector(asynq.RedisClientOpt{Addr: opts.URL})
 	cli := asynq.NewClient(asynq.RedisClientOpt{Addr: opts.URL})
 	return &Asynq{

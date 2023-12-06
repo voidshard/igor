@@ -1,4 +1,4 @@
-package structs
+package api
 
 import (
 	"time"

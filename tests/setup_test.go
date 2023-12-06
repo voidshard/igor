@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/voidshard/igor/pkg/core"
+	"github.com/voidshard/igor/pkg/api"
 	"github.com/voidshard/igor/pkg/database"
 	"github.com/voidshard/igor/pkg/queue"
 )
@@ -16,9 +16,8 @@ var (
 
 type Setup struct {
 	db  database.Database
-	qdb *core.QueueDB
 	que queue.Queue
-	svc *core.Service
+	svc api.API
 }
 
 func init() {
@@ -35,14 +34,12 @@ func init() {
 	}
 	setup.db = dbconn
 
-	setup.qdb = core.NewQueueDB(setup.db)
-
-	setup.que, err = queue.NewAsynqQueue(setup.qdb, &queue.Options{URL: rdURL})
+	setup.que, err = queue.NewAsynqQueue(database.NewQueueDB(dbconn), &queue.Options{URL: rdURL})
 	if err != nil {
 		panic(err)
 	}
 
-	svc, err := core.NewService(setup.db, setup.que, &core.Options{
+	svc, err := api.New(setup.db, setup.que, &api.Options{
 		EventRoutines:     2,
 		TidyRoutines:      2,
 		TidyJobFrequency:  1 * time.Minute,

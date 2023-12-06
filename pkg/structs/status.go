@@ -14,3 +14,12 @@ const (
 	ERRORED   Status = "ERRORED"
 	SKIPPED   Status = "SKIPPED"
 )
+
+func IsFinalStatus(status Status) bool {
+	switch status {
+	case COMPLETED, SKIPPED, ERRORED:
+		return true
+	default:
+		return false
+	}
+}
