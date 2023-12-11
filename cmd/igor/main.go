@@ -2,11 +2,11 @@ package main
 
 import (
 	"os"
+	"os/signal"
 
 	"github.com/jessevdk/go-flags"
 
 	"github.com/voidshard/igor/pkg/api"
-	"github.com/voidshard/igor/pkg/api/http"
 	"github.com/voidshard/igor/pkg/database"
 	"github.com/voidshard/igor/pkg/queue"
 )
@@ -20,28 +20,18 @@ const (
 )
 
 var CLI struct {
-	Addr string `long:"addr" env:"ADDR" description:"Address to bind to" default:"localhost:8100"`
-
 	DatabaseURL string `long:"database-url" env:"DATABASE_URL" description:"Database connection string"`
 
 	RedisURL string `long:"redis-url" env:"REDIS_URL" description:"Redis connection string"`
 
 	Debug bool `long:"debug" env:"DEBUG" description:"Enable debug logging"`
-
-	StaticDir string `long:"static-dir" env:"STATIC_DIR" default:"" description:"Serve static files from this directory"`
 }
 
 func main() {
-	// This main runs an API server (in this case, http) so that callers can interact with Igor over HTTP.
-	// Since this is configured with OptionsClientDefault it does not run any background routines
-	// that Igor needs to function (ie, to process events, queue tasks etc).
+	// This main runs an Igor internal server. That is, it runs some number of internal worker routines
+	// to process igor events, queue tasks, push status updates or whatever else.
 	//
-	// This is intended purely to serve Igor's service API to clients over the network.
-	//
-	// If you wished to interact with Igor via. importing the pkg libraries, then you don't need to run this.
-	//
-	// Alternatively, you could add more servers under pkg/api/ to serve Igor's API over other protocols like
-	// gRPC, thrift or whatever you like and modifiy this to serve them all.
+	// This is intended to be run internal background processes, not to serve Igor's API to clients.
 
 	var parser = flags.NewParser(&CLI, flags.Default)
 	if _, err := parser.Parse(); err != nil {
@@ -66,12 +56,15 @@ func main() {
 	api, err := api.New(
 		&database.Options{URL: CLI.DatabaseURL},
 		&queue.Options{URL: CLI.RedisURL},
-		api.OptionsClientDefault(),
+		api.OptionsServerDefault(),
 	)
 	if err != nil {
 		panic(err)
 	}
 
-	s := http.NewServer(CLI.Addr, CLI.StaticDir, CLI.Debug)
-	s.ServeForever(api)
+	defer api.Close()
+
+	exit := make(chan os.Signal, 1)
+	signal.Notify(exit, os.Interrupt)
+	<-exit
 }

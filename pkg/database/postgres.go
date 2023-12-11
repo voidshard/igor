@@ -52,7 +52,7 @@ func (p *Postgres) InsertJob(j *structs.Job, ls []*structs.Layer, ts []*structs.
 		targs = append(targs, a...)
 	}
 	tstr := strings.Join(tstrs, ",") // join so its (),(),() etc
-	tstr = fmt.Sprintf(`INSERT INTO %s (type, args, name, paused_at, id, status, etag, job_id, layer_id, created_at, updated_at) VALUES %s;`, string(structs.KindTask), tstr)
+	tstr = fmt.Sprintf(`INSERT INTO %s (type, args, name, paused_at, retries, id, status, etag, job_id, layer_id, queue_task_id, message, created_at, updated_at) VALUES %s;`, string(structs.KindTask), tstr)
 
 	// ok, we're ready to go
 	ctx := context.Background()
@@ -100,7 +100,7 @@ func (p *Postgres) InsertTasks(in []*structs.Task) error {
 		targs = append(targs, a...)
 	}
 	tstr := strings.Join(tstrs, ",") // join so its (),(),() etc
-	tstr = fmt.Sprintf(`INSERT INTO %s (type, args, name, paused_at, id, status, etag, job_id, layer_id, created_at, updated_at) VALUES %s;`, string(structs.KindTask), tstr)
+	tstr = fmt.Sprintf(`INSERT INTO %s (type, args, name, paused_at, retries, id, status, etag, job_id, layer_id, queue_task_id, message, created_at, updated_at) VALUES %s;`, string(structs.KindTask), tstr)
 
 	ctx := context.Background()
 	conn, err := p.pool.Acquire(ctx)
@@ -114,92 +114,56 @@ func (p *Postgres) InsertTasks(in []*structs.Task) error {
 	return err
 }
 
-func (p *Postgres) InsertRuns(in []*structs.Run) error {
-	// setup run insert sql
-	taskIDs := map[string]bool{}
-	rstrs, rargs := []string{}, []interface{}{}
-	for _, r := range in {
-		s, a := toRunSqlArgs(1, r)
-		rstrs = append(rstrs, s)
-		rargs = append(rargs, a...)
-		taskIDs[r.TaskID] = true
-	}
-	rstr := strings.Join(rstrs, ",") // join so its (),(),() etc
-	rstr = fmt.Sprintf(`INSERT INTO %s (id, status, etag, job_id, layer_id, task_id, queue_task_id, message, created_at, updated_at) VALUES %s;`, string(structs.KindRun), rstr)
-
-	// work out task status update
-	targs := []interface{}{
-		structs.RUNNING,
-		utils.NewRandomID(),
-		timeNow(),
-	}
-	for id := range taskIDs {
-		targs = append(targs, id)
-	}
-	tstr := toSqlNumberParams(4, len(taskIDs)+4)
-	tstr = fmt.Sprintf(`UPDATE %s SET status=$1, etag=$2, updated_at=$3 WHERE id IN %s;`, string(structs.KindTask), tstr)
-
-	// aaand update
-	ctx := context.Background()
-	conn, err := p.pool.Acquire(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
-
-	tx, err := conn.Begin(ctx)
-
-	_, err = tx.Exec(ctx, rstr, rargs...)
-	if err != nil {
-		tx.Rollback(ctx)
-		return err
-	}
-
-	_, err = tx.Exec(ctx, tstr, targs...)
-	if err != nil {
-		tx.Rollback(ctx)
-		return err
-	}
-
-	err = tx.Commit(ctx)
-	if err != nil {
-		tx.Rollback(ctx)
-	}
-	return err
-}
-
-func (p *Postgres) SetLayersPaused(at int64, newTag string, ids []*IDTag) (int64, error) {
+func (p *Postgres) SetLayersPaused(at int64, newTag string, ids []*structs.ObjectRef) (int64, error) {
 	return p.setPaused(string(structs.KindLayer), at, newTag, ids)
 }
 
-func (p *Postgres) SetTasksPaused(at int64, newTag string, ids []*IDTag) (int64, error) {
+func (p *Postgres) SetTasksPaused(at int64, newTag string, ids []*structs.ObjectRef) (int64, error) {
 	return p.setPaused(string(structs.KindTask), at, newTag, ids)
 }
 
-func (p *Postgres) SetJobsStatus(status structs.Status, newTag string, ids []*IDTag) (int64, error) {
+func (p *Postgres) SetJobsStatus(status structs.Status, newTag string, ids []*structs.ObjectRef) (int64, error) {
 	return p.setStatus(string(structs.KindJob), status, newTag, ids)
 }
 
-func (p *Postgres) SetLayersStatus(status structs.Status, newTag string, ids []*IDTag) (int64, error) {
+func (p *Postgres) SetLayersStatus(status structs.Status, newTag string, ids []*structs.ObjectRef) (int64, error) {
 	return p.setStatus(string(structs.KindLayer), status, newTag, ids)
 }
 
-func (p *Postgres) SetTasksStatus(status structs.Status, newTag string, ids []*IDTag) (int64, error) {
-	return p.setStatus(string(structs.KindTask), status, newTag, ids)
-}
-
-func (p *Postgres) SetRunsStatus(status structs.Status, newTag string, ids []*IDTag, msg ...string) (int64, error) {
+func (p *Postgres) SetTasksStatus(status structs.Status, newTag string, ids []*structs.ObjectRef, msg ...string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
 	var qstr string
 	var args []interface{}
 	if msg == nil || len(msg) == 0 {
-		qstr, args := toSqlTags(4, ids)
-		qstr = fmt.Sprintf(`UPDATE %s SET status=$1, etag=$2, updated_at=$3 WHERE %s;`, string(structs.KindRun), qstr)
+		qstr, args = toSqlTags(4, ids)
+		qstr = fmt.Sprintf(`UPDATE %s SET status=$1, etag=$2, updated_at=$3 WHERE %s;`, string(structs.KindTask), qstr)
 		args = append([]interface{}{status, newTag, timeNow()}, args...)
 	} else {
-		qstr, args := toSqlTags(5, ids)
-		qstr = fmt.Sprintf(`UPDATE %s SET status=$1, etag=$2, updated_at=$3, message=$4 WHERE %s;`, string(structs.KindRun), qstr)
+		qstr, args = toSqlTags(5, ids)
+		qstr = fmt.Sprintf(`UPDATE %s SET status=$1, etag=$2, updated_at=$3, message=$4 WHERE %s;`, string(structs.KindTask), qstr)
 		args = append([]interface{}{status, newTag, timeNow(), strings.Join(msg, " ")}, args...)
 	}
+
+	ctx := context.Background()
+	conn, err := p.pool.Acquire(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Release()
+
+	info, err := conn.Exec(ctx, qstr, args...)
+	if err == nil {
+		return info.RowsAffected(), nil
+	}
+	return 0, err
+}
+
+func (p *Postgres) SetTaskQueueID(taskID, etag, newEtag, queueTaskID string, state structs.Status) (int64, error) {
+	etag = utils.NewRandomID()
+	qstr := fmt.Sprintf(`UPDATE %s SET queue_task_id=$1, etag=$2, updated_at=$3, status=$4 WHERE id=$5 AND etag=$6;`, string(structs.KindTask))
+	args := []interface{}{queueTaskID, newEtag, timeNow(), state, taskID, etag}
 
 	ctx := context.Background()
 	conn, err := p.pool.Acquire(ctx)
@@ -316,7 +280,7 @@ func (p *Postgres) Tasks(q *structs.Query) ([]*structs.Task, error) {
 	})
 	args = append(args, q.Limit, q.Offset)
 
-	qstr := fmt.Sprintf(`SELECT type, args, name, paused_at, id, status, etag, job_id, layer_id, created_at, updated_at FROM %s %s
+	qstr := fmt.Sprintf(`SELECT type, args, name, paused_at, id, status, etag, job_id, layer_id, queue_task_id, message, created_at, updated_at FROM %s %s
 	ORDER BY created_at DESC LIMIT $%d OFFSET $%d;`,
 		string(structs.KindTask), where, len(args)-1, len(args),
 	)
@@ -346,6 +310,8 @@ func (p *Postgres) Tasks(q *structs.Query) ([]*structs.Task, error) {
 			&t.ETag,
 			&t.JobID,
 			&t.LayerID,
+			&t.QueueTaskID,
+			&t.Message,
 			&t.CreatedAt,
 			&t.UpdatedAt,
 		)
@@ -356,57 +322,6 @@ func (p *Postgres) Tasks(q *structs.Query) ([]*structs.Task, error) {
 	}
 
 	return tasks, nil
-}
-
-func (p *Postgres) Runs(q *structs.Query) ([]*structs.Run, error) {
-	where, args := toSqlQuery(map[string][]string{
-		"job_id":   q.JobIDs,
-		"layer_id": q.LayerIDs,
-		"task_id":  q.TaskIDs,
-		"id":       q.RunIDs,
-		"status":   statusToStrings(q.Statuses),
-	})
-	args = append(args, q.Limit, q.Offset)
-
-	qstr := fmt.Sprintf(`SELECT id, status, etag, job_id, layer_id, task_id, queue_task_id, message, created_at, updated_at FROM %s %s
-	ORDER BY created_at DESC LIMIT $%d OFFSET $%d;`,
-		string(structs.KindRun), where, len(args)-1, len(args),
-	)
-
-	ctx := context.Background()
-	conn, err := p.pool.Acquire(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Release()
-
-	rows, err := conn.Query(ctx, qstr, args...)
-	if err != nil {
-		return nil, err
-	}
-
-	runs := []*structs.Run{}
-	for rows.Next() {
-		r := structs.Run{}
-		err = rows.Scan(
-			&r.ID,
-			&r.Status,
-			&r.ETag,
-			&r.JobID,
-			&r.LayerID,
-			&r.TaskID,
-			&r.QueueTaskID,
-			&r.Message,
-			&r.CreatedAt,
-			&r.UpdatedAt,
-		)
-		if err != nil {
-			return nil, err
-		}
-		runs = append(runs, &r)
-	}
-
-	return runs, nil
 }
 
 func (p *Postgres) Changes() (ChangeStream, error) {
@@ -423,7 +338,7 @@ func (p *Postgres) Changes() (ChangeStream, error) {
 	}, err
 }
 
-func (p *Postgres) setStatus(table string, status structs.Status, newTag string, ids []*IDTag) (int64, error) {
+func (p *Postgres) setStatus(table string, status structs.Status, newTag string, ids []*structs.ObjectRef) (int64, error) {
 	qstr, args := toSqlTags(4, ids)
 	qstr = fmt.Sprintf(`UPDATE %s SET status=$1, etag=$2, updated_at=$3 WHERE %s;`, table, qstr)
 	args = append([]interface{}{status, newTag, timeNow()}, args...)
@@ -442,7 +357,7 @@ func (p *Postgres) setStatus(table string, status structs.Status, newTag string,
 	return 0, err
 }
 
-func (p *Postgres) setPaused(table string, at int64, newTag string, ids []*IDTag) (int64, error) {
+func (p *Postgres) setPaused(table string, at int64, newTag string, ids []*structs.ObjectRef) (int64, error) {
 	qstr, args := toSqlTags(4, ids)
 	qstr = fmt.Sprintf(`UPDATE %s SET paused_at=$1, etag=$2, updated_at=$3 WHERE %s;`, table, qstr)
 	args = append([]interface{}{at, newTag, timeNow()}, args...)
@@ -505,7 +420,7 @@ func toSqlNumberParams(from, to int) string {
 	return fmt.Sprintf("(%s)", strings.Join(vals, ", "))
 }
 
-func toSqlTags(offset int, ids []*IDTag) (string, []interface{}) {
+func toSqlTags(offset int, ids []*structs.ObjectRef) (string, []interface{}) {
 	vals := []string{}
 	subs := []interface{}{}
 	for i, id := range ids {
@@ -558,7 +473,7 @@ func toLayerSqlArgs(offset int, l *structs.Layer) (string, []interface{}) {
 
 func toTaskSqlArgs(offset int, t *structs.Task) (string, []interface{}) {
 	vals := []string{}
-	for i := offset; i < 11+offset; i++ {
+	for i := offset; i < 14+offset; i++ {
 		vals = append(vals, fmt.Sprintf("$%d", i))
 	}
 	if t.CreatedAt == 0 {
@@ -570,36 +485,16 @@ func toTaskSqlArgs(offset int, t *structs.Task) (string, []interface{}) {
 		t.Args,
 		t.Name,
 		t.PausedAt,
+		t.Retries,
 		t.ID,
 		t.Status,
 		t.ETag,
 		t.JobID,
 		t.LayerID,
+		t.QueueTaskID,
+		t.Message,
 		t.CreatedAt,
 		t.UpdatedAt,
-	}
-}
-
-func toRunSqlArgs(offset int, r *structs.Run) (string, []interface{}) {
-	vals := []string{}
-	for i := offset; i < 10+offset; i++ {
-		vals = append(vals, fmt.Sprintf("$%d", i))
-	}
-	if r.CreatedAt == 0 {
-		r.CreatedAt = timeNow()
-		r.UpdatedAt = r.CreatedAt
-	}
-	return fmt.Sprintf("(%s)", strings.Join(vals, ", ")), []interface{}{
-		r.ID,
-		r.Status,
-		r.ETag,
-		r.JobID,
-		r.LayerID,
-		r.TaskID,
-		r.QueueTaskID,
-		r.Message,
-		r.CreatedAt,
-		r.UpdatedAt,
 	}
 }
 

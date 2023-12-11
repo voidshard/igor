@@ -12,13 +12,16 @@ type Queue interface {
 	//
 	// In general, if possible, tasks should be batched. Task queues that don't allow this are
 	// somewhat dubious imho.
-	Register(task string, handler func(work []*Meta)) error
+	Register(task string, handler func(work []*Meta) error) error
+
+	// Run the queue & process tasks (via Register funcs). This should block until Close() is called.
+	Run() error
 
 	// Enqueue a task with the given id and arguments.
 	//
 	// If it supports it, the Queue will return a unique id for the queued task with which we can
 	// call Kill(the-given-id) to stop the task from running.
-	Enqueue(task *structs.Task, run *structs.Run) (string, error)
+	Enqueue(task *structs.Task) (string, error)
 
 	// Kill a queued task with ID given to us by Enqueue.
 	Kill(queuedTaskID string) error

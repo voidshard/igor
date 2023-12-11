@@ -1,0 +1,57 @@
+{
+   "name": "test-job-01", 
+   "layers": [
+       {
+            "name": "test-layer-01",
+            "priority": 0,
+            "paused_at": 100,
+            "tasks": [
+                {
+                    "type": "sleep",
+                    "args": "MQ==",
+                    "name": "test-task-01-01"
+                },
+                {
+                    "type": "sleep",
+                    "args": "Mg==",
+                    "name": "test-task-01-02"
+                },
+                {
+                    "type": "sleep",
+                    "args": "Mw==",
+                    "name": "test-task-01-03",
+                    "paused_at": 50,
+                    "retries": 1
+                }
+            ]
+       },
+       {
+            "name": "test-layer-02",
+            "priority": 0,
+            "paused_at": 100,
+            "tasks": [
+                {
+                    "type": "sleep",
+                    "args": "NA==",
+                    "name": "test-task-02-01"
+                },
+                {
+                    "type": "sleep",
+                    "args": "NQ==",
+                    "name": "test-task-02-02"
+                },
+                {
+                    "type": "sleep",
+                    "args": "Ng==",
+                    "name": "test-task-02-03"
+                }
+            ]
+       },
+       {
+            "name": "test-layer-03",
+            "priority": 10,
+            "paused_at": 0,
+            "tasks": []
+       }
+   ]
+}

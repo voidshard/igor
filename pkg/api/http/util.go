@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	hp "net/http"
+	"strconv"
 
+	"github.com/voidshard/igor/internal/utils"
 	ie "github.com/voidshard/igor/pkg/errors"
+	"github.com/voidshard/igor/pkg/structs"
 )
 
 var (
@@ -39,6 +42,70 @@ func mapError(err error) int {
 		}
 	}
 	return hp.StatusInternalServerError
+}
+
+func unmarshalQuery(w hp.ResponseWriter, r *hp.Request, out *structs.Query) error {
+	q := r.URL.Query()
+
+	if q.Has("limit") {
+		limit, err := strconv.Atoi(q.Get("limit"))
+		if err != nil {
+			hp.Error(w, err.Error(), hp.StatusBadRequest)
+			return fmt.Errorf("bad limit: %v", err)
+		}
+		out.Limit = limit
+	}
+
+	if q.Has("offset") {
+		offset, err := strconv.Atoi(q.Get("offset"))
+		if err != nil {
+			hp.Error(w, err.Error(), hp.StatusBadRequest)
+			return fmt.Errorf("bad offset: %v", err)
+		}
+		out.Offset = offset
+	}
+
+	if q.Has("job_ids") {
+		out.JobIDs = q["job_ids"]
+		for _, id := range out.JobIDs {
+			if !utils.IsValidID(id) {
+				hp.Error(w, "bad job id", hp.StatusBadRequest)
+				return fmt.Errorf("bad job id: %v", id)
+			}
+		}
+	}
+	if q.Has("layer_ids") {
+		out.LayerIDs = q["layer_ids"]
+		for _, id := range out.LayerIDs {
+			if !utils.IsValidID(id) {
+				hp.Error(w, "bad layer id", hp.StatusBadRequest)
+				return fmt.Errorf("bad layer id: %v", id)
+			}
+		}
+	}
+	if q.Has("task_ids") {
+		out.TaskIDs = q["task_ids"]
+		for _, id := range out.TaskIDs {
+			if !utils.IsValidID(id) {
+				hp.Error(w, "bad task id", hp.StatusBadRequest)
+				return fmt.Errorf("bad task id: %v", id)
+			}
+		}
+	}
+	if q.Has("statuses") {
+		out.Statuses = []structs.Status{}
+		for _, s := range q["statuses"] {
+			st := structs.ToStatus(s)
+			if st == "" {
+				hp.Error(w, "bad status", hp.StatusBadRequest)
+				return fmt.Errorf("bad status: %v", s)
+			}
+			out.Statuses = append(out.Statuses, st)
+		}
+	}
+
+	out.Sanitize()
+	return nil
 }
 
 // unmarshalJson reads the body of a request and attempts to unmarshal it into the given object.

@@ -27,11 +27,14 @@ PGUSER=${PGUSER:-postgres}
 # Template user passwords
 RW_PASS=${PGUSER_READWRITE_PASS:-readwrite} \
 RO_PASS=${PGUSER_READONLY_PASS:-readonly} \
+envsubst <00.tmpl >00.sql
+
+# Template user passwords
 TABLE_JOBS=${TABLE_JOBS:-Job} \
 TABLE_LAYERS=${TABLE_LAYERS:-Layer} \
 TABLE_TASKS=${TABLE_TASKS:-Task} \
-TABLE_RUNS=${TABLE_RUNS:-Run} \
-envsubst <00.tmpl >00.sql
+envsubst <01.tmpl >01.sql
 
 # Run
 PGPASSWORD=${PGPASSWORD:-test} psql -h $PGHOST -p $PGPORT -U $PGUSER -d postgres -f 00.sql
+PGPASSWORD=${PGUSER_READWRITE_PASS:-readwrite} psql -h $PGHOST -p $PGPORT -U igorreadwrite -d igor -f 01.sql

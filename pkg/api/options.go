@@ -4,6 +4,10 @@ import (
 	"time"
 )
 
+const (
+	defMaxTaskRuntime = 1 * time.Hour
+)
+
 // Options passed to the Igor API on creation
 type Options struct {
 	// MaxTaskRuntime is the absolute maximum time a task is permitted to run for.
@@ -24,4 +28,26 @@ type Options struct {
 
 	// TidyRoutines is the number of routines allocated to tidy tasks (above).
 	TidyRoutines int64
+}
+
+// OptionsClientDefault runs an Igor service that runs no backend worker routines.
+// This is intended either for;
+// - clients who want to use the API service to Register queue workers
+// - clients who wish to serve an API, without performing background work
+func OptionsClientDefault() *Options {
+	return &Options{
+		MaxTaskRuntime: defMaxTaskRuntime,
+	}
+}
+
+// OptionsServerDefault runs and Igor service that runs background worker routines to
+// ensure consistency of Igor data & handle internal events.
+func OptionsServerDefault() *Options {
+	return &Options{
+		MaxTaskRuntime:    defMaxTaskRuntime,
+		EventRoutines:     4,
+		TidyJobFrequency:  5 * time.Minute,
+		TidyTaskFrequency: 5 * time.Minute,
+		TidyRoutines:      2,
+	}
 }

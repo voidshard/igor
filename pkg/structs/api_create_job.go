@@ -9,17 +9,17 @@ type JobLayerRequest struct {
 type CreateJobRequest struct {
 	JobSpec `json:",inline"`
 
-	Layers []JobLayerRequest
+	Layers []JobLayerRequest `json:"layers"`
 }
 
 type JobLayerResponse struct {
 	*Layer `json:",inline"`
 
-	Tasks []*Task
+	Tasks []*Task `json:"tasks"`
 }
 
 type CreateJobResponse struct {
 	*Job `json:",inline"`
 
-	Layers []*JobLayerResponse
+	Layers []*JobLayerResponse `json:"layers"`
 }

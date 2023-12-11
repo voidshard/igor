@@ -2,7 +2,11 @@ package main
 
 import (
 	"testing"
+
+	"github.com/voidshard/igor/pkg/structs"
 )
 
-func TestHelloWorld(t *testing.T) {
+func TestCreateJob(t *testing.T) {
+	cjr := structs.CreateJobRequest{}
+
 }

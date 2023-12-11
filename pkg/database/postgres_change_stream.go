@@ -46,14 +46,29 @@ func (p *pgChangeStream) Next() (*Change, error) {
 		return nil, err
 	}
 
+	ch := &Change{}
 	if strings.HasPrefix(payload.Table, "l") {
+		ch.Kind = structs.KindLayer
 		lyr := pgLayerPayload{}
 		err = json.Unmarshal([]byte(notification.Payload), &lyr)
-		return &Change{Old: lyr.Old, New: lyr.New, Kind: structs.KindLayer}, err
+		if lyr.Old != nil {
+			ch.Old = lyr.Old
+		}
+		if lyr.New != nil {
+			ch.New = lyr.New
+		}
+		return ch, nil
 	} else if strings.HasPrefix(payload.Table, "t") {
+		ch.Kind = structs.KindTask
 		tsk := pgTaskPayload{}
 		err = json.Unmarshal([]byte(notification.Payload), &tsk)
-		return &Change{Old: tsk.Old, New: tsk.New, Kind: structs.KindTask}, err
+		if tsk.Old != nil {
+			ch.Old = tsk.Old
+		}
+		if tsk.New != nil {
+			ch.New = tsk.New
+		}
+		return ch, nil
 	}
 
 	return nil, fmt.Errorf("unknown kind for table %s", payload.Table)

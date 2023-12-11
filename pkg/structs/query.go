@@ -13,7 +13,6 @@ type Query struct {
 	JobIDs   []string `json:"job_ids,omitempty"`
 	LayerIDs []string `json:"layer_ids,omitempty"`
 	TaskIDs  []string `json:"task_ids,omitempty"`
-	RunIDs   []string `json:"run_ids,omitempty"`
 	Statuses []Status `json:"statuses,omitempty"`
 }
 
@@ -35,9 +34,6 @@ func (q *Query) Sanitize() {
 	}
 	if q.TaskIDs == nil || len(q.TaskIDs) == 0 {
 		q.TaskIDs = nil
-	}
-	if q.RunIDs == nil || len(q.RunIDs) == 0 {
-		q.RunIDs = nil
 	}
 	if q.Statuses == nil || len(q.Statuses) == 0 {
 		q.Statuses = nil

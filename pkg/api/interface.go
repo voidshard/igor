@@ -9,15 +9,15 @@ type API interface {
 	CreateJob(cjr *structs.CreateJobRequest) (*structs.CreateJobResponse, error)
 	CreateTasks(in []*structs.CreateTaskRequest) ([]*structs.Task, error)
 
-	Pause(r []*structs.ToggleRequest) (int64, error)
-	Unpause(r []*structs.ToggleRequest) (int64, error)
-	Skip(r []*structs.ToggleRequest) (int64, error)
-	Kill(r []*structs.ToggleRequest) (int64, error)
+	Pause(r []*structs.ObjectRef) (int64, error)
+	Unpause(r []*structs.ObjectRef) (int64, error)
+	Skip(r []*structs.ObjectRef) (int64, error)
+	Kill(r []*structs.ObjectRef) (int64, error)
+	Retry(r []*structs.ObjectRef) (int64, error)
 
 	Jobs(q *structs.Query) ([]*structs.Job, error)
 	Layers(q *structs.Query) ([]*structs.Layer, error)
 	Tasks(q *structs.Query) ([]*structs.Task, error)
-	Runs(q *structs.Query) ([]*structs.Run, error)
 }
 
 type Server interface {

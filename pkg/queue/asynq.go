@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +20,6 @@ const (
 	asyncAggMaxSize  = 1000
 	asyncAggMaxDelay = 2 * time.Second
 	asyncAggRune     = "¬"
-	asyncTaskRune    = "|"
 )
 
 type Asynq struct {
@@ -36,6 +36,9 @@ type Asynq struct {
 	lock sync.Mutex
 	mux  *asynq.ServeMux
 	srv  *asynq.Server
+
+	//
+	errs chan error
 }
 
 func NewAsynqQueue(svc database.QueueDB, opts *Options) (*Asynq, error) {
@@ -55,10 +58,18 @@ func (a *Asynq) Close() error {
 	}
 	a.srv.Stop()
 	a.srv.Shutdown()
+	close(a.errs)
 	return nil
 }
 
-func (a *Asynq) Register(task string, handler func(work []*Meta)) error {
+func (a *Asynq) Run() error {
+	if a.srv == nil {
+		a.buildServer()
+	}
+	return a.srv.Run(a.mux)
+}
+
+func (a *Asynq) Register(task string, handler func(work []*Meta) error) error {
 	if a.mux == nil {
 		a.buildServer()
 	}
@@ -67,8 +78,16 @@ func (a *Asynq) Register(task string, handler func(work []*Meta)) error {
 		if err != nil {
 			return err
 		}
-		handler(meta)
-		return a.batchUpdates(meta)
+		err = handler(meta)
+		if err != nil {
+			return err
+		}
+		for _, m := range meta {
+			if m.Task.Status == structs.QUEUED || m.Task.Status == structs.RUNNING {
+				m.SetComplete()
+			}
+		}
+		return nil
 	})
 	return nil
 }
@@ -78,105 +97,32 @@ func (a *Asynq) Kill(queuedTaskID string) error {
 	return a.ins.CancelProcessing(queuedTaskID)
 }
 
-func (a *Asynq) batchUpdates(meta []*Meta) error {
-	// work out all the updates we need to do
-	taskUpdates := map[string][]*structs.Task{}
-	runUpdates := map[string][]*structs.Run{}
-	for _, m := range meta {
-		// determine batches of task updates
-		tup := string(structs.COMPLETED)
-		if m.skip { // skip trumps all
-			tup = string(structs.SKIPPED)
-		} else if m.err != nil {
-			tup = string(structs.ERRORED)
-		}
-
-		// run has the same status, but we have messages to deal with too
-		rup := fmt.Sprintf("%s:%s", tup, m.msg)
-
-		// record stuff we can update together
-		tupdates, ok := taskUpdates[tup]
-		if !ok {
-			tupdates = []*structs.Task{}
-		}
-		taskUpdates[tup] = append(tupdates, m.Task)
-
-		rupdates, ok := runUpdates[rup]
-		if !ok {
-			rupdates = []*structs.Run{}
-		}
-		runUpdates[rup] = append(rupdates, m.Run)
-	}
-
-	// we'll try to apply all updates & return any errors we get
-	errs := []error{}
-	for _, tasks := range taskUpdates {
-		err := a.svc.SetTasksState(tasks, structs.Status(tasks[0].Status))
-		errs = append(errs, err)
-	}
-	for _, runs := range runUpdates {
-		err := a.svc.SetRunsState(runs, structs.Status(runs[0].Status), runs[0].Message)
-		errs = append(errs, err)
-	}
-
-	//TODO there probably is a lib to do this
-	if len(errs) == 0 {
-		return nil
-	} else if len(errs) == 1 {
-		return errs[0]
-	}
-	final := fmt.Errorf("multiple errors: ")
-	for _, err := range errs {
-		final = fmt.Errorf("%w\n%v", final, err)
-	}
-	return final
-}
-
 func (a *Asynq) deaggregateTasks(t *asynq.Task) ([]*Meta, error) {
 	// parse into ID pairs
 	taskIDs := []string{}
-	runIDs := []string{}
-	for _, load := range bytes.Split(t.Payload(), []byte(asyncTaskRune)) {
-		load = bytes.TrimSpace(load)
+	for _, load := range bytes.Split(t.Payload(), []byte(asyncAggRune)) {
+		id := bytes.TrimSpace(load)
 		if len(load) == 0 {
 			continue
 		}
-		parts := bytes.Split(load, []byte(asyncAggRune))
-		if len(parts) != 2 {
-			continue
-		}
-		taskIDs = append(taskIDs, string(parts[0]))
-		runIDs = append(runIDs, string(parts[1]))
+		taskIDs = append(taskIDs, string(id))
 	}
 
 	tasks, err := a.svc.Tasks(taskIDs)
 	if err != nil {
 		return nil, err
 	}
-	runs, err := a.svc.Runs(runIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	taskByID := map[string]*structs.Task{}
-	for _, t := range tasks {
-		taskByID[t.ID] = t
-	}
 
 	ms := []*Meta{}
-	for _, r := range runs {
-		task, ok := taskByID[r.TaskID]
-		if ok {
-			ms = append(ms, &Meta{Task: task, Run: r})
-		}
+	for _, t := range tasks {
+		ms = append(ms, &Meta{Task: t, svc: a.svc, errs: a.errs})
 	}
 
 	return ms, nil
 }
 
-func (a *Asynq) Enqueue(task *structs.Task, run *structs.Run) (string, error) {
-	args := bytes.Join([][]byte{[]byte(task.ID), []byte(run.ID)}, []byte(asyncTaskRune))
-	qtask := asynq.NewTask(task.Type, args)
+func (a *Asynq) Enqueue(task *structs.Task) (string, error) {
+	qtask := asynq.NewTask(task.Type, []byte(task.ID), asynq.MaxRetry(int(task.Retries)))
 	info, err := a.cli.Enqueue(qtask, asynq.Queue(asyncWorkQueue), asynq.Group(aggregatedTask(task.Type)))
 	if err != nil {
 		return "", err
@@ -203,6 +149,14 @@ func (a *Asynq) buildServer() {
 	mux := asynq.NewServeMux()
 	a.srv = srv
 	a.mux = mux
+	a.errs = make(chan error)
+	go func() {
+		for err := range a.errs {
+			if err != nil {
+				log.Println("asynq error:", err)
+			}
+		}
+	}()
 }
 
 func aggregate(group string, tasks []*asynq.Task) *asynq.Task {

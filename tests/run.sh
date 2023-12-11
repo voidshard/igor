@@ -5,13 +5,13 @@
 # Ie. not unit tests, this stands up a redis & postgres in docker to run against.
 
 PGHOST=${PGHOST:-localhost}
-PGPORT=${PGPORT:-15432}
+PGPORT=${PGPORT:-5432}
 PGUSER=${PGUSER:-postgres}
 PGDATABASE=${PGDATABASE:-igor}
 PGPASSWORD=${PGPASSWORD:-test}
 
 REDISHOST=${REDISHOST:-localhost}
-REDISPORT=${REDISPORT:-16379}
+REDISPORT=${REDISPORT:-6379}
 REDISDB=${REDISDB:-0}
 
 set -eux

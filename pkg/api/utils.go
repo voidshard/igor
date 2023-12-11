@@ -5,40 +5,49 @@ import (
 	"sort"
 
 	"github.com/voidshard/igor/internal/utils"
-	"github.com/voidshard/igor/pkg/database"
 	"github.com/voidshard/igor/pkg/errors"
 	"github.com/voidshard/igor/pkg/structs"
 )
 
-func runnableJobLayers(layers []*structs.Layer) (structs.Status, []*structs.Layer) {
+func determineJobStatus(layers []*structs.Layer) (structs.Status, []*structs.Layer) {
 	sort.Slice(layers, func(i, j int) bool {
 		return layers[i].Priority < layers[j].Priority
 	})
 
-	done := 0
-	canRun := []*structs.Layer{}
+	// finds the first layer that we can run (ie, all layers with lower priority are done)
+	mustRunNext := []*structs.Layer{} // layers of the same priority that must run next
+	canRun := []*structs.Layer{}      // layers we can & should set to running
 	var lowest int64
 	for _, l := range layers {
-		if structs.IsFinalStatus(l.Status) {
-			done++
+		if l.Status == structs.SKIPPED || l.Status == structs.COMPLETED {
 			continue
 		}
-		if len(canRun) > 0 && l.Priority > lowest {
+		if len(mustRunNext) > 0 && l.Priority > lowest {
+			// ie. if there's another layer that can run, whose priority is lower than this one
+			// that layer must run first (and we cannot run this at the same time)
 			break
 		}
+		// otherwise, if all previous layers haven't died (error/killed) and either
+		// - we have no layers yet (nb. we're processing in priority order)
+		// - our priority is less than or equal to the lowest priority layer that can run
+		// then this layer should run next
 		lowest = l.Priority
-		canRun = append(canRun, l)
+		mustRunNext = append(mustRunNext, l)
+
+		if l.Status == structs.PENDING || l.Status == structs.QUEUED || l.Status == structs.READY {
+			canRun = append(canRun, l)
+		}
 	}
 
-	if done == len(layers) {
-		return structs.COMPLETED, canRun
+	if len(mustRunNext) > 0 {
+		return structs.RUNNING, canRun
 	}
-	return structs.RUNNING, canRun
+	return structs.COMPLETED, canRun
 }
 
 func layerCanHaveMoreTasks(layer *structs.Layer) bool {
 	switch layer.Status {
-	case structs.PENDING, structs.QUEUED:
+	case structs.PENDING, structs.QUEUED, structs.READY:
 		return true
 	case structs.RUNNING:
 		return layer.PausedAt > 0
@@ -47,8 +56,8 @@ func layerCanHaveMoreTasks(layer *structs.Layer) bool {
 	}
 }
 
-func validateToggles(in []*structs.ToggleRequest) (map[structs.Kind][]*database.IDTag, error) {
-	out := map[structs.Kind][]*database.IDTag{}
+func validateToggles(in []*structs.ObjectRef) (map[structs.Kind][]*structs.ObjectRef, error) {
+	out := map[structs.Kind][]*structs.ObjectRef{}
 	for _, t := range in {
 		if !utils.IsValidID(t.ID) {
 			return nil, fmt.Errorf("%w %s", errors.ErrInvalidArg, t.ID)
@@ -63,16 +72,16 @@ func validateToggles(in []*structs.ToggleRequest) (map[structs.Kind][]*database.
 		}
 		currently, ok := out[k]
 		if !ok {
-			currently = []*database.IDTag{}
+			currently = []*structs.ObjectRef{}
 		}
-		out[k] = append(currently, &database.IDTag{ID: t.ID, ETag: t.ETag})
+		out[k] = append(currently, &structs.ObjectRef{ID: t.ID, ETag: t.ETag})
 	}
 	return out, nil
 }
 
 func validateKind(k structs.Kind) error {
 	switch k {
-	case structs.KindJob, structs.KindLayer, structs.KindTask, structs.KindRun:
+	case structs.KindJob, structs.KindLayer, structs.KindTask:
 		return nil
 	default:
 		return fmt.Errorf("%w %s", errors.ErrInvalidArg, k)
@@ -114,8 +123,8 @@ func buildJob(cjr *structs.CreateJobRequest) (*structs.Job, []*structs.Layer, []
 				Status:   structs.PENDING,
 				ETag:     etag,
 			}
-			if layer.Status == structs.RUNNING {
-				new_task.Status = structs.QUEUED
+			if layer.Status == structs.RUNNING && layer.PausedAt == 0 {
+				new_task.Status = structs.READY
 			}
 			tasks = append(tasks, new_task)
 			by_layer = append(by_layer, new_task)
