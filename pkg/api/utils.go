@@ -11,27 +11,27 @@ import (
 
 func determineJobStatus(layers []*structs.Layer) (structs.Status, []*structs.Layer) {
 	sort.Slice(layers, func(i, j int) bool {
-		return layers[i].Priority < layers[j].Priority
+		return layers[i].Order < layers[j].Order
 	})
 
-	// finds the first layer that we can run (ie, all layers with lower priority are done)
-	mustRunNext := []*structs.Layer{} // layers of the same priority that must run next
+	// finds the first layer that we can run (ie, all layers with lower order are done)
+	mustRunNext := []*structs.Layer{} // layers of the same order that must run next
 	canRun := []*structs.Layer{}      // layers we can & should set to running
 	var lowest int64
 	for _, l := range layers {
 		if l.Status == structs.SKIPPED || l.Status == structs.COMPLETED {
 			continue
 		}
-		if len(mustRunNext) > 0 && l.Priority > lowest {
-			// ie. if there's another layer that can run, whose priority is lower than this one
+		if len(mustRunNext) > 0 && l.Order > lowest {
+			// ie. if there's another layer that can run, whose order is lower than this one
 			// that layer must run first (and we cannot run this at the same time)
 			break
 		}
 		// otherwise, if all previous layers haven't died (error/killed) and either
-		// - we have no layers yet (nb. we're processing in priority order)
-		// - our priority is less than or equal to the lowest priority layer that can run
+		// - we have no layers yet (nb. we're processing in order order)
+		// - our order is less than or equal to the lowest order layer that can run
 		// then this layer should run next
-		lowest = l.Priority
+		lowest = l.Order
 		mustRunNext = append(mustRunNext, l)
 
 		if l.Status == structs.PENDING || l.Status == structs.QUEUED || l.Status == structs.READY {
@@ -108,7 +108,7 @@ func buildJob(cjr *structs.CreateJobRequest) (*structs.Job, []*structs.Layer, []
 			Status:    structs.PENDING,
 			ETag:      etag,
 		}
-		if layer.Priority <= 0 {
+		if layer.Order <= 0 {
 			layer.Status = structs.RUNNING
 		}
 		layers = append(layers, layer)

@@ -1,1 +1,2 @@
-cmd/db_migrate/00.sql
+cmd/db_migrate/*.sql
+**/__pycache__

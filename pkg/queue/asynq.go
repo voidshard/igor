@@ -98,7 +98,7 @@ func (a *Asynq) Kill(queuedTaskID string) error {
 }
 
 func (a *Asynq) deaggregateTasks(t *asynq.Task) ([]*Meta, error) {
-	// parse into ID pairs
+	// parse into IDs (the payloads)
 	taskIDs := []string{}
 	for _, load := range bytes.Split(t.Payload(), []byte(asyncAggRune)) {
 		id := bytes.TrimSpace(load)
@@ -108,11 +108,13 @@ func (a *Asynq) deaggregateTasks(t *asynq.Task) ([]*Meta, error) {
 		taskIDs = append(taskIDs, string(id))
 	}
 
+	// read out the tasks
 	tasks, err := a.svc.Tasks(taskIDs)
 	if err != nil {
 		return nil, err
 	}
 
+	// build in "metas" (sugar for callers)
 	ms := []*Meta{}
 	for _, t := range tasks {
 		ms = append(ms, &Meta{Task: t, svc: a.svc, errs: a.errs})

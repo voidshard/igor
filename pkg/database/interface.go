@@ -1,19 +1,9 @@
 package database
 
 import (
+	"github.com/voidshard/igor/pkg/database/changes"
 	"github.com/voidshard/igor/pkg/structs"
 )
-
-type Change struct {
-	Kind structs.Kind
-	Old  interface{}
-	New  interface{}
-}
-
-type ChangeStream interface {
-	Next() (*Change, error)
-	Close() error
-}
 
 type Database interface {
 	InsertJob(j *structs.Job, ls []*structs.Layer, ts []*structs.Task) error
@@ -31,7 +21,7 @@ type Database interface {
 	Layers(q *structs.Query) ([]*structs.Layer, error)
 	Tasks(q *structs.Query) ([]*structs.Task, error)
 
-	Changes() (ChangeStream, error)
+	Changes() (changes.Stream, error)
 
 	Close() error
 }
@@ -46,8 +36,4 @@ type QueueDB interface {
 	//
 	// The tasks new etag is returned, if it's set successfully
 	SetTaskState(task *structs.Task, st structs.Status, msg string) (string, error)
-}
-
-func NewQueueDB(db Database) QueueDB {
-	return newDefaultQDB(db)
 }

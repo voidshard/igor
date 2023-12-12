@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/voidshard/igor/pkg/database/changes"
 	"github.com/voidshard/igor/pkg/structs"
 )
 
@@ -30,7 +32,7 @@ type pgTaskPayload struct {
 	New *structs.Task `json:"new"`
 }
 
-func (p *pgChangeStream) Next() (*Change, error) {
+func (p *pgChangeStream) Next() (*changes.Change, error) {
 	if p.closed {
 		return nil, nil
 	}
@@ -46,7 +48,7 @@ func (p *pgChangeStream) Next() (*Change, error) {
 		return nil, err
 	}
 
-	ch := &Change{}
+	ch := &changes.Change{}
 	if strings.HasPrefix(payload.Table, "l") {
 		ch.Kind = structs.KindLayer
 		lyr := pgLayerPayload{}

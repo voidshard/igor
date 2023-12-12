@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/voidshard/igor/internal/utils"
+	"github.com/voidshard/igor/pkg/database/changes"
 	"github.com/voidshard/igor/pkg/structs"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -42,7 +42,7 @@ func (p *Postgres) InsertJob(j *structs.Job, ls []*structs.Layer, ts []*structs.
 		largs = append(largs, a...)
 	}
 	lstr := strings.Join(lstrs, ",") // join so its (),(),() etc
-	lstr = fmt.Sprintf(`INSERT INTO %s (name, paused_at, priority, id, status, etag, job_id, created_at, updated_at) VALUES %s;`, string(structs.KindLayer), lstr)
+	lstr = fmt.Sprintf(`INSERT INTO %s (name, paused_at, order, id, status, etag, job_id, created_at, updated_at) VALUES %s;`, string(structs.KindLayer), lstr)
 
 	// tasks
 	tstrs, targs := []string{}, []interface{}{}
@@ -161,7 +161,6 @@ func (p *Postgres) SetTasksStatus(status structs.Status, newTag string, ids []*s
 }
 
 func (p *Postgres) SetTaskQueueID(taskID, etag, newEtag, queueTaskID string, state structs.Status) (int64, error) {
-	etag = utils.NewRandomID()
 	qstr := fmt.Sprintf(`UPDATE %s SET queue_task_id=$1, etag=$2, updated_at=$3, status=$4 WHERE id=$5 AND etag=$6;`, string(structs.KindTask))
 	args := []interface{}{queueTaskID, newEtag, timeNow(), state, taskID, etag}
 
@@ -231,7 +230,7 @@ func (p *Postgres) Layers(q *structs.Query) ([]*structs.Layer, error) {
 	})
 	args = append(args, q.Limit, q.Offset)
 
-	qstr := fmt.Sprintf(`SELECT name, paused_at, priority, id, status, etag, job_id, created_at, updated_at FROM %s %s 
+	qstr := fmt.Sprintf(`SELECT name, paused_at, order, id, status, etag, job_id, created_at, updated_at FROM %s %s 
 	ORDER BY created_at DESC LIMIT $%d OFFSET $%d;`,
 		string(structs.KindLayer), where, len(args)-1, len(args),
 	)
@@ -254,7 +253,7 @@ func (p *Postgres) Layers(q *structs.Query) ([]*structs.Layer, error) {
 		err = rows.Scan(
 			&l.Name,
 			&l.PausedAt,
-			&l.Priority,
+			&l.Order,
 			&l.ID,
 			&l.Status,
 			&l.ETag,
@@ -324,7 +323,7 @@ func (p *Postgres) Tasks(q *structs.Query) ([]*structs.Task, error) {
 	return tasks, nil
 }
 
-func (p *Postgres) Changes() (ChangeStream, error) {
+func (p *Postgres) Changes() (changes.Stream, error) {
 	ctx := context.Background()
 	conn, err := p.pool.Acquire(ctx)
 	if err != nil {
@@ -461,7 +460,7 @@ func toLayerSqlArgs(offset int, l *structs.Layer) (string, []interface{}) {
 	return fmt.Sprintf("(%s)", strings.Join(vals, ", ")), []interface{}{
 		l.Name,
 		l.PausedAt,
-		l.Priority,
+		l.Order,
 		l.ID,
 		l.Status,
 		l.ETag,
@@ -499,7 +498,7 @@ func toTaskSqlArgs(offset int, t *structs.Task) (string, []interface{}) {
 }
 
 func statusToStrings(in []structs.Status) []string {
-	if in == nil {
+	if in == nil || len(in) == 0 {
 		return nil
 	}
 	out := []string{}

@@ -4,7 +4,7 @@ type LayerSpec struct {
 	// Optional
 	Name     string `json:"name"`
 	PausedAt int64  `json:"paused_at"`
-	Priority int64  `json:"priority"` // lowest goes first, 0 starts immediately
+	Order    int64  `json:"order"` // lowest goes first, 0 starts immediately
 }
 
 type Layer struct {

@@ -1,8 +1,6 @@
 package utils
 
 // Inspired by https://github.com/komuw/yuyuid/blob/master/yuyuid.go
-// used to create deterministic UUIDs
-// These are not intended to be cryptographically secure - simply deterministic uuid4-esque ids.
 
 import (
 	"crypto/md5"
@@ -24,8 +22,6 @@ type UUID [16]byte
 var (
 	// checks if we match a UUID like 123e4567-e89b-12d3-a456-426655440000
 	valid = regexp.MustCompile("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-
-	rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 )
 
 // Create a new ID string deterministically
@@ -46,6 +42,7 @@ func NewId(args ...interface{}) string {
 	return newUUID(args...).String()
 }
 
+// Create a new ID randomly
 func NewRandomID() string {
 	return newUUID(
 		time.Now().UnixNano(),
@@ -56,6 +53,7 @@ func NewRandomID() string {
 	).String()
 }
 
+// String returns the string representation of the UUID
 func (u UUID) String() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:])
 }
