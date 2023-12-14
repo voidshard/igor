@@ -46,6 +46,9 @@ func determineJobStatus(layers []*structs.Layer) (structs.Status, []*structs.Lay
 }
 
 func layerCanHaveMoreTasks(layer *structs.Layer) bool {
+	if structs.IsFinalStatus(layer.Status) {
+		return false
+	}
 	switch layer.Status {
 	case structs.PENDING, structs.QUEUED, structs.READY:
 		return true
@@ -58,6 +61,9 @@ func layerCanHaveMoreTasks(layer *structs.Layer) bool {
 
 func validateToggles(in []*structs.ObjectRef) (map[structs.Kind][]*structs.ObjectRef, error) {
 	out := map[structs.Kind][]*structs.ObjectRef{}
+	if in == nil || len(in) == 0 {
+		return out, nil
+	}
 	for _, t := range in {
 		if !utils.IsValidID(t.ID) {
 			return nil, fmt.Errorf("%w %s", errors.ErrInvalidArg, t.ID)
@@ -65,16 +71,15 @@ func validateToggles(in []*structs.ObjectRef) (map[structs.Kind][]*structs.Objec
 		if !utils.IsValidID(t.ETag) {
 			return nil, fmt.Errorf("%w %s", errors.ErrInvalidArg, t.ETag)
 		}
-		k := structs.Kind(t.Kind)
-		err := validateKind(k)
+		err := validateKind(t.Kind)
 		if err != nil {
 			return nil, err
 		}
-		currently, ok := out[k]
+		currently, ok := out[t.Kind]
 		if !ok {
 			currently = []*structs.ObjectRef{}
 		}
-		out[k] = append(currently, &structs.ObjectRef{ID: t.ID, ETag: t.ETag})
+		out[t.Kind] = append(currently, &structs.ObjectRef{ID: t.ID, ETag: t.ETag, Kind: t.Kind})
 	}
 	return out, nil
 }
@@ -97,6 +102,13 @@ func buildJob(cjr *structs.CreateJobRequest) (*structs.Job, []*structs.Layer, []
 		ETag:    etag,
 	}
 
+	lowestOrder := cjr.Layers[0].Order
+	for _, l := range cjr.Layers {
+		if l.Order < lowestOrder {
+			lowestOrder = l.Order
+		}
+	}
+
 	layers := []*structs.Layer{}
 	tasks := []*structs.Task{}
 	tasks_by_layer := map[string][]*structs.Task{}
@@ -108,7 +120,7 @@ func buildJob(cjr *structs.CreateJobRequest) (*structs.Job, []*structs.Layer, []
 			Status:    structs.PENDING,
 			ETag:      etag,
 		}
-		if layer.Order <= 0 {
+		if layer.Order == lowestOrder {
 			layer.Status = structs.RUNNING
 		}
 		layers = append(layers, layer)

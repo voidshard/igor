@@ -7,6 +7,7 @@ import (
 
 	"github.com/voidshard/igor/internal/utils"
 	"github.com/voidshard/igor/pkg/database"
+	"github.com/voidshard/igor/pkg/database/changes"
 	"github.com/voidshard/igor/pkg/errors"
 	"github.com/voidshard/igor/pkg/queue"
 	"github.com/voidshard/igor/pkg/structs"
@@ -25,6 +26,16 @@ var (
 		structs.QUEUED,
 		structs.RUNNING,
 	}
+
+	// Defaut internal vars
+	// - set here as it's easier to change & test (ie. pagination)
+	defLimitQueueTidyJobWork     = 500
+	defLimitSkipLayerTasks       = 2000
+	defLimitHandleTidyJobs       = 2000
+	defLimitDetermineJobStatus   = 2000
+	defLimitDetermineLayerStatus = 2000
+	defLimitEnqueueLayerTasks    = 2000
+	defLimitQueueTidyTaskWork    = 2000
 )
 
 type Service struct {
@@ -103,13 +114,13 @@ func newService(db database.Database, qu queue.Queue, opts *Options) (*Service, 
 		// We can still have multiple processes fetching events (ie. multiple igor services)
 		// but this greatly cuts down on duplicate work.
 
-		evtWork := make(chan *database.Change)
+		evtWork := make(chan *changes.Change)
 
 		go func() {
 			// Listen to changes. Retry on error(s) forever.
 			defer close(evtWork)
 
-			var stream database.ChangeStream
+			var stream changes.Stream
 			var err error
 			for {
 				stream, err = db.Changes()
@@ -477,7 +488,7 @@ func (c *Service) enqueueTasks(ts []*structs.Task) error {
 	return nil
 }
 
-func (c *Service) handleEvents(errchan chan<- error, evtWork chan *database.Change) {
+func (c *Service) handleEvents(errchan chan<- error, evtWork chan *changes.Change) {
 	for evt := range evtWork {
 		var err error
 		switch evt.Kind {
@@ -494,7 +505,7 @@ func (c *Service) handleEvents(errchan chan<- error, evtWork chan *database.Chan
 	}
 }
 
-func (c *Service) handleLayerEvent(evt *database.Change) error {
+func (c *Service) handleLayerEvent(evt *changes.Change) error {
 	if evt.New == nil { // deleted
 		return nil
 	}
@@ -561,7 +572,7 @@ func (c *Service) handleLayerEvent(evt *database.Change) error {
 
 func (c *Service) enqueueLayerTasks(layerID string) (int, error) {
 	q := &structs.Query{
-		Limit:    2000,
+		Limit:    defLimitEnqueueLayerTasks,
 		Offset:   0,
 		LayerIDs: []string{layerID},
 		Statuses: []structs.Status{
@@ -591,7 +602,7 @@ func (c *Service) enqueueLayerTasks(layerID string) (int, error) {
 
 func (c *Service) determineLayerStatus(layerID string) (structs.Status, error) {
 	q := &structs.Query{
-		Limit:    2000,
+		Limit:    defLimitDetermineLayerStatus,
 		Offset:   0,
 		LayerIDs: []string{layerID},
 		// ie. not COMPLETED or SKIPPED
@@ -650,7 +661,7 @@ func (c *Service) determineLayerStatus(layerID string) (structs.Status, error) {
 
 func (c *Service) determineJobStatus(jobID string) (structs.Status, []*structs.Layer, error) {
 	q := &structs.Query{
-		Limit:    2000,
+		Limit:    defLimitDetermineJobStatus,
 		JobIDs:   []string{jobID},
 		Statuses: append(incompleteStates, structs.ERRORED, structs.KILLED),
 	}
@@ -686,7 +697,7 @@ func (c *Service) killTask(task *structs.Task) error {
 	return err
 }
 
-func (c *Service) handleTaskEvent(evt *database.Change) error {
+func (c *Service) handleTaskEvent(evt *changes.Change) error {
 	// deleted or created
 	if evt.New == nil || evt.Old == nil {
 		return nil
@@ -793,7 +804,7 @@ func (c *Service) handleTidyJobs(errchan chan<- error, jobs []*structs.Job) {
 		jobIDs = append(jobIDs, j.ID)
 	}
 
-	query := &structs.Query{Limit: 2000, JobIDs: jobIDs, Statuses: incompleteStates}
+	query := &structs.Query{Limit: defLimitHandleTidyJobs, JobIDs: jobIDs, Statuses: incompleteStates}
 	byJob := map[string][]*structs.Layer{}
 	for {
 		layers, err := c.db.Layers(query)
@@ -893,7 +904,7 @@ func (c *Service) handleReapTasks(errchan chan<- error, tasks []*structs.Task) {
 }
 
 func (c *Service) queueTidyTaskWork(errchan chan<- error, taskWork chan<- []*structs.Task) {
-	q := &structs.Query{Limit: 2000, Offset: 0, Statuses: []structs.Status{structs.KILLED, structs.READY, structs.PENDING}}
+	q := &structs.Query{Limit: defLimitQueueTidyTaskWork, Offset: 0, Statuses: []structs.Status{structs.KILLED, structs.READY, structs.PENDING}}
 	for {
 		tasks, err := c.db.Tasks(q)
 		if err != nil {
@@ -915,7 +926,7 @@ func (c *Service) queueTidyTaskWork(errchan chan<- error, taskWork chan<- []*str
 // We do this periodically just in case something died / was missed / restarted.
 func (c *Service) queueTidyJobWork(errchan chan<- error, jobWork chan<- []*structs.Job) {
 	// fetch jobs that are incomplete & pass them over to be looked at
-	q := &structs.Query{Limit: 500, Offset: 0, Statuses: incompleteStates}
+	q := &structs.Query{Limit: defLimitQueueTidyJobWork, Offset: 0, Statuses: incompleteStates}
 	for {
 		jobs, err := c.db.Jobs(q)
 		if err != nil {
@@ -933,8 +944,11 @@ func (c *Service) queueTidyJobWork(errchan chan<- error, jobWork chan<- []*struc
 }
 
 func (c *Service) skipLayerTasks(in []*structs.ObjectRef) error {
+	if in == nil || len(in) == 0 {
+		return nil
+	}
 	q := &structs.Query{
-		Limit:    2000,
+		Limit:    defLimitSkipLayerTasks,
 		Offset:   0,
 		LayerIDs: []string{},
 		Statuses: incompleteStates,

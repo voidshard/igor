@@ -376,6 +376,9 @@ func (p *Postgres) setPaused(table string, at int64, newTag string, ids []*struc
 }
 
 func toSqlQuery(in map[string][]string) (string, []interface{}) {
+	if in == nil || len(in) == 0 {
+		return "", []interface{}{}
+	}
 	and := []string{}
 	args := []interface{}{}
 	for k, v := range in {
@@ -393,6 +396,9 @@ func toSqlQuery(in map[string][]string) (string, []interface{}) {
 }
 
 func toSqlIn(offset int, field string, args []string) (string, []interface{}) {
+	if len(args) == 0 {
+		return "", []interface{}{}
+	}
 	vals := []string{}
 	ifargs := []interface{}{}
 	for i, a := range args {
@@ -411,19 +417,11 @@ func toListInterface(in []string) []interface{} {
 	return l
 }
 
-func toSqlNumberParams(from, to int) string {
-	vals := []string{}
-	for i := from; i < to; i++ {
-		vals = append(vals, fmt.Sprintf("$%d", i))
-	}
-	return fmt.Sprintf("(%s)", strings.Join(vals, ", "))
-}
-
 func toSqlTags(offset int, ids []*structs.ObjectRef) (string, []interface{}) {
 	vals := []string{}
 	subs := []interface{}{}
-	for i, id := range ids {
-		vals = append(vals, fmt.Sprintf("(id=$%d AND etag=$%d)", i+offset, i+offset+1))
+	for _, id := range ids {
+		vals = append(vals, fmt.Sprintf("(id=$%d AND etag=$%d)", offset+len(subs), offset+len(subs)+1))
 		subs = append(subs, id.ID, id.ETag)
 	}
 	return strings.Join(vals, " OR "), subs

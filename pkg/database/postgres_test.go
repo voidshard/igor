@@ -8,8 +8,153 @@ import (
 	"github.com/voidshard/igor/pkg/structs"
 )
 
-func TestToSqlTags(t *testing.T) {
+func TestToSqlQuery(t *testing.T) {
+	cases := []struct {
+		Name        string
+		In          map[string][]string
+		ExpectQuery string
+		ExpectArgs  []interface{}
+	}{
+		{
+			Name:        "Nil",
+			In:          nil,
+			ExpectQuery: "",
+			ExpectArgs:  []interface{}{},
+		},
+		{
+			Name:        "Empty",
+			In:          map[string][]string{},
+			ExpectQuery: "",
+			ExpectArgs:  []interface{}{},
+		},
+		{
+			Name: "OneField",
+			In: map[string][]string{
+				"field": []string{"a"},
+			},
+			ExpectQuery: "WHERE field IN ($1)",
+			ExpectArgs:  []interface{}{"a"},
+		},
+		{
+			Name: "OneFieldMultipleArgs",
+			In: map[string][]string{
+				"field": []string{"a", "b", "c"},
+			},
+			ExpectQuery: "WHERE field IN ($1, $2, $3)",
+			ExpectArgs:  []interface{}{"a", "b", "c"},
+		},
+		{
+			Name: "MultipleFieldsMultipleArgs",
+			In: map[string][]string{
+				"field1": []string{"a", "b", "c"},
+				"field2": []string{"d", "e", "f"},
+			},
+			ExpectQuery: "WHERE field1 IN ($1, $2, $3) AND field2 IN ($4, $5, $6)",
+			ExpectArgs:  []interface{}{"a", "b", "c", "d", "e", "f"},
+		},
+	}
 
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			qstr, args := toSqlQuery(c.In)
+
+			assert.Equal(t, c.ExpectQuery, qstr)
+			assert.Equal(t, c.ExpectArgs, args)
+		})
+	}
+}
+
+func TestToSqlIn(t *testing.T) {
+	cases := []struct {
+		Name        string
+		InOffset    int
+		InField     string
+		InArgs      []string
+		ExpectQuery string
+		ExpectArgs  []interface{}
+	}{
+		{
+			Name:        "Empty",
+			InOffset:    1,
+			InField:     "field",
+			InArgs:      []string{},
+			ExpectQuery: "",
+			ExpectArgs:  []interface{}{},
+		},
+		{
+			Name:        "OneArg",
+			InOffset:    3,
+			InField:     "field",
+			InArgs:      []string{"a"},
+			ExpectQuery: "field IN ($3)",
+			ExpectArgs:  []interface{}{"a"},
+		},
+		{
+			Name:        "MultipleArgs",
+			InOffset:    5,
+			InField:     "field",
+			InArgs:      []string{"a", "b", "c"},
+			ExpectQuery: "field IN ($5, $6, $7)",
+			ExpectArgs:  []interface{}{"a", "b", "c"},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			qstr, args := toSqlIn(c.InOffset, c.InField, c.InArgs)
+
+			assert.Equal(t, c.ExpectQuery, qstr)
+			assert.Equal(t, c.ExpectArgs, args)
+		})
+	}
+}
+
+func TestToListInterface(t *testing.T) {
+	in := []string{"a", "b", "c"}
+
+	out := toListInterface(in)
+
+	assert.Equal(t, []interface{}{"a", "b", "c"}, out)
+}
+
+func TestToSqlTags(t *testing.T) {
+	cases := []struct {
+		Name        string
+		InOffset    int
+		InIds       []*structs.ObjectRef
+		ExpectQuery string
+		ExpectArgs  []interface{}
+	}{
+		{
+			Name:        "Empty",
+			InOffset:    0,
+			InIds:       []*structs.ObjectRef{},
+			ExpectQuery: "",
+			ExpectArgs:  []interface{}{},
+		},
+		{
+			Name:     "TwoIDs",
+			InOffset: 5,
+			InIds: []*structs.ObjectRef{
+				&structs.ObjectRef{ID: "a", ETag: "b"},
+				&structs.ObjectRef{ID: "c", ETag: "d"},
+			},
+			ExpectQuery: "(id=$5 AND etag=$6) OR (id=$7 AND etag=$8)",
+			ExpectArgs: []interface{}{
+				"a", "b",
+				"c", "d",
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			qstr, args := toSqlTags(c.InOffset, c.InIds)
+
+			assert.Equal(t, c.ExpectQuery, qstr)
+			assert.Equal(t, c.ExpectArgs, args)
+		})
+	}
 }
 
 func TestToJobSqlArgs(t *testing.T) {
