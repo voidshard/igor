@@ -88,12 +88,6 @@ func TestSetTaskStateInvalid(t *testing.T) {
 			Error:    fmt.Errorf("%w %s is not a permitted status (running, errored, completed, skipped)", errors.ErrInvalidState, structs.PENDING),
 		},
 		{
-			Name:     "InvalidStatusReady",
-			InTask:   &structs.Task{ID: utils.NewID(1), ETag: utils.NewID(2)},
-			InStatus: structs.READY,
-			Error:    fmt.Errorf("%w %s is not a permitted status (running, errored, completed, skipped)", errors.ErrInvalidState, structs.READY),
-		},
-		{
 			Name:     "InvalidStatusQueued",
 			InTask:   &structs.Task{ID: utils.NewID(1), ETag: utils.NewID(2)},
 			InStatus: structs.QUEUED,

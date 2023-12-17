@@ -3,10 +3,15 @@ package api
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/voidshard/igor/internal/utils"
 	"github.com/voidshard/igor/pkg/errors"
 	"github.com/voidshard/igor/pkg/structs"
+)
+
+var (
+	timeNow = func() int64 { return time.Now().Unix() }
 )
 
 func determineJobStatus(layers []*structs.Layer) (structs.Status, []*structs.Layer) {
@@ -18,6 +23,7 @@ func determineJobStatus(layers []*structs.Layer) (structs.Status, []*structs.Lay
 	mustRunNext := []*structs.Layer{} // layers of the same order that must run next
 	canRun := []*structs.Layer{}      // layers we can & should set to running
 	var lowest int64
+	seenErrored := false
 	for _, l := range layers {
 		if l.Status == structs.SKIPPED || l.Status == structs.COMPLETED {
 			continue
@@ -34,11 +40,17 @@ func determineJobStatus(layers []*structs.Layer) (structs.Status, []*structs.Lay
 		lowest = l.Order
 		mustRunNext = append(mustRunNext, l)
 
-		if l.Status == structs.PENDING || l.Status == structs.QUEUED || l.Status == structs.READY {
+		// record if we've seen an errored layer
+		seenErrored = seenErrored || l.Status == structs.ERRORED
+
+		if l.Status == structs.PENDING || l.Status == structs.QUEUED {
 			canRun = append(canRun, l)
 		}
 	}
 
+	if len(canRun) == 0 && seenErrored { // we have more work to do but cannot proceed
+		return structs.ERRORED, canRun
+	}
 	if len(mustRunNext) > 0 {
 		return structs.RUNNING, canRun
 	}
@@ -50,7 +62,7 @@ func layerCanHaveMoreTasks(layer *structs.Layer) bool {
 		return false
 	}
 	switch layer.Status {
-	case structs.PENDING, structs.QUEUED, structs.READY:
+	case structs.PENDING, structs.QUEUED:
 		return true
 	case structs.RUNNING:
 		return layer.PausedAt > 0
@@ -134,9 +146,6 @@ func buildJob(cjr *structs.CreateJobRequest) (*structs.Job, []*structs.Layer, []
 				LayerID:  layer.ID,
 				Status:   structs.PENDING,
 				ETag:     etag,
-			}
-			if layer.Status == structs.RUNNING && layer.PausedAt == 0 {
-				new_task.Status = structs.READY
 			}
 			tasks = append(tasks, new_task)
 			by_layer = append(by_layer, new_task)

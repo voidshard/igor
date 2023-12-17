@@ -10,10 +10,14 @@ type Query struct {
 	Offset int `json:"offset,omitempty"`
 
 	// Filters
-	JobIDs   []string `json:"job_ids,omitempty"`
-	LayerIDs []string `json:"layer_ids,omitempty"`
-	TaskIDs  []string `json:"task_ids,omitempty"`
-	Statuses []Status `json:"statuses,omitempty"`
+	JobIDs        []string `json:"job_ids,omitempty"`
+	LayerIDs      []string `json:"layer_ids,omitempty"`
+	TaskIDs       []string `json:"task_ids,omitempty"`
+	Statuses      []Status `json:"statuses,omitempty"`
+	UpdatedBefore int64    `json:"updated_before,omitempty"`
+	UpdatedAfter  int64    `json:"updated_after,omitempty"`
+	CreatedBefore int64    `json:"created_before,omitempty"`
+	CreatedAfter  int64    `json:"created_after,omitempty"`
 }
 
 func (q *Query) Sanitize() {

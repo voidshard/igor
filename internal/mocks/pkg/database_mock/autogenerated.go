@@ -172,12 +172,11 @@ func (mr *MockDatabaseMockRecorder) SetLayersStatus(status, newTag, ids any) *go
 }
 
 // SetTaskQueueID mocks base method.
-func (m *MockDatabase) SetTaskQueueID(taskID, etag, newEtag, queueTaskID string, newState structs.Status) (int64, error) {
+func (m *MockDatabase) SetTaskQueueID(taskID, etag, newEtag, queueTaskID string, newState structs.Status) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SetTaskQueueID", taskID, etag, newEtag, queueTaskID, newState)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret0, _ := ret[0].(error)
+	return ret0
 }
 
 // SetTaskQueueID indicates an expected call of SetTaskQueueID.

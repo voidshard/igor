@@ -9,7 +9,6 @@ type Status string
 const (
 	// transient states
 	PENDING Status = "PENDING"
-	READY   Status = "READY"
 	QUEUED  Status = "QUEUED"
 	RUNNING Status = "RUNNING"
 
@@ -33,8 +32,6 @@ func ToStatus(s string) Status {
 	switch strings.ToUpper(s) {
 	case "PENDING":
 		return PENDING
-	case "READY":
-		return READY
 	case "QUEUED":
 		return QUEUED
 	case "RUNNING":

@@ -18,9 +18,9 @@ type Options struct {
 	// (changes to Task(s) & Layer(s))
 	EventRoutines int64
 
-	// TidyJobFrequency is how often we look over jobs / layers to check they're in the right states
+	// TidyLayer is how often we look over layers to check they're in the right states
 	// (we do this in case event(s) were dropped / errors occurred)
-	TidyJobFrequency time.Duration
+	TidyLayerFrequency time.Duration
 
 	// TidyTaskFrequency is how often we look over tasks to check if they need reaping
 	// (ie, they've been running too long & need to be killed / retried)
@@ -28,6 +28,13 @@ type Options struct {
 
 	// TidyRoutines is the number of routines allocated to tidy tasks (above).
 	TidyRoutines int64
+
+	// TidyUpdateThreshold sets how far back in time the last update to an object must
+	// be before we'll forcibly recheck it.
+	// That is if TidyUpdateThreshold is 5 mins, we only consider in-progress items
+	// whose last update was over 5 mins ago.
+	// Nb. we only ever check in-progress objects; items in a final state we don't tidy.
+	TidyUpdateThreshold time.Duration
 }
 
 // OptionsClientDefault runs an Igor service that runs no backend worker routines.
@@ -44,10 +51,11 @@ func OptionsClientDefault() *Options {
 // ensure consistency of Igor data & handle internal events.
 func OptionsServerDefault() *Options {
 	return &Options{
-		MaxTaskRuntime:    defMaxTaskRuntime,
-		EventRoutines:     4,
-		TidyJobFrequency:  5 * time.Minute,
-		TidyTaskFrequency: 5 * time.Minute,
-		TidyRoutines:      2,
+		MaxTaskRuntime:      defMaxTaskRuntime,
+		EventRoutines:       4,
+		TidyRoutines:        2,
+		TidyLayerFrequency:  7 * time.Minute,
+		TidyTaskFrequency:   3 * time.Minute,
+		TidyUpdateThreshold: 5 * time.Minute,
 	}
 }

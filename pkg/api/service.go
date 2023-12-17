@@ -27,23 +27,14 @@ var (
 		structs.RUNNING,
 	}
 
-	// Defaut internal vars
-	// - set here as it's easier to change & test (ie. pagination)
-	defLimitQueueTidyJobWork     = 500
-	defLimitSkipLayerTasks       = 2000
-	defLimitHandleTidyJobs       = 2000
-	defLimitDetermineJobStatus   = 2000
-	defLimitDetermineLayerStatus = 2000
-	defLimitEnqueueLayerTasks    = 2000
-	defLimitQueueTidyTaskWork    = 2000
+	defLimit = 2000
 )
 
 type Service struct {
-	// implements
-
 	db   database.Database
 	qu   queue.Queue
 	opts *Options
+	errs chan error
 }
 
 func New(dbopts *database.Options, queopts *queue.Options, opts *Options) (*Service, error) {
@@ -59,11 +50,10 @@ func New(dbopts *database.Options, queopts *queue.Options, opts *Options) (*Serv
 }
 
 func newService(db database.Database, qu queue.Queue, opts *Options) (*Service, error) {
-	me := &Service{db: db, qu: qu, opts: opts}
+	me := &Service{db: db, qu: qu, opts: opts, errs: make(chan error)}
 
-	errs := make(chan error)
 	go func() {
-		for err := range errs {
+		for err := range me.errs {
 			if err != nil {
 				log.Println("[Service]", err)
 			}
@@ -71,86 +61,103 @@ func newService(db database.Database, qu queue.Queue, opts *Options) (*Service, 
 	}()
 
 	if opts.TidyRoutines > 0 {
-		// TidyRoutines work in batches, periodically rechecking jobs that aren't complete
-		// (and their layers / tasks) in case some event(s) were dropped / missed.
-
-		tidyJobWork := make(chan []*structs.Job)
-		reapTaskWork := make(chan []*structs.Task)
-		go func() {
-			defer close(tidyJobWork)
-			defer close(reapTaskWork)
-
-			tickJob := time.NewTicker(opts.TidyJobFrequency)
-			tickTask := time.NewTicker(opts.TidyTaskFrequency)
-			for {
-				select {
-				case <-tickJob.C:
-					me.queueTidyJobWork(errs, tidyJobWork)
-				case <-tickTask.C:
-					me.queueTidyTaskWork(errs, reapTaskWork)
-				}
-			}
-		}()
-
-		for i := int64(0); i < opts.TidyRoutines; i++ {
-			go func() {
-				for {
-					select {
-					case jobs := <-tidyJobWork:
-						me.handleTidyJobs(errs, jobs)
-					case tasks := <-reapTaskWork:
-						me.handleReapTasks(errs, tasks)
-					}
-				}
-			}()
-		}
+		me.startTidyRoutines()
 	}
 
 	if opts.EventRoutines > 0 {
-		// Rather than have each worker routine listen for events and deal with massive
-		// numbers of duplicates (and more work for the DB) we have a single routine
-		// that fetches events and passes them to a channel.
-		//
-		// We can still have multiple processes fetching events (ie. multiple igor services)
-		// but this greatly cuts down on duplicate work.
-
-		evtWork := make(chan *changes.Change)
-
-		go func() {
-			// Listen to changes. Retry on error(s) forever.
-			defer close(evtWork)
-
-			var stream changes.Stream
-			var err error
-			for {
-				stream, err = db.Changes()
-				if err != nil {
-					errs <- err
-					continue
-				}
-
-				for {
-					evt, err := stream.Next()
-					if err != nil {
-						errs <- err
-						break
-					}
-					if evt == nil {
-						return
-					}
-					evtWork <- evt
-				}
-			}
-		}()
-
-		for i := int64(0); i < opts.EventRoutines; i++ {
-			go func() {
-				me.handleEvents(errs, evtWork)
-			}()
-		}
+		me.startEventRoutines()
 	}
 
 	return me, nil
+}
+
+func (c *Service) startTidyRoutines() {
+	// Tidy work is internal busy work re-checking data to ensure it's in the correct state if it hasn't been
+	// updated in a while. This is guarding against dropped events / errors.
+	//
+	// The rate of re-processing here is limited to one routine that fetches data in batches and some number
+	// of worker routines.
+	//
+	// This means that hopefully even when processing at full speed we generate constant but a predictable
+	// load on the DB (and for the process as a whole).
+	//
+	// Note that these routines are seperate from dedicated event routines.
+
+	tidyLayerWork := make(chan *structs.Layer)
+	tidyTaskWork := make(chan *structs.Task)
+	go func() {
+		defer close(tidyLayerWork)
+		defer close(tidyTaskWork)
+
+		tickLyr := time.NewTicker(c.opts.TidyLayerFrequency)
+		tickTsk := time.NewTicker(c.opts.TidyTaskFrequency)
+		for {
+			select {
+			case <-tickLyr.C:
+				c.queueTidyLayerWork(c.errs, tidyLayerWork)
+			case <-tickTsk.C:
+				c.queueTidyTaskWork(c.errs, tidyTaskWork)
+			}
+		}
+	}()
+
+	for i := int64(0); i < c.opts.TidyRoutines; i++ {
+		go func() {
+			for {
+				// Nb. we could batch here, but since we simply re-call the handle event (which takes 1)
+				// the batch wouldn't acheive much.
+				select {
+				case w := <-tidyLayerWork:
+					c.errs <- c.handleLayerEvent(&changes.Change{Kind: structs.KindLayer, Old: w, New: w})
+				case w := <-tidyTaskWork:
+					c.errs <- c.handleTaskEvent(&changes.Change{Kind: structs.KindTask, Old: w, New: w})
+				}
+			}
+		}()
+	}
+}
+
+func (c *Service) startEventRoutines() {
+	// Rather than have each worker routine listen for events and deal with massive
+	// numbers of duplicates (and more work for the DB) we have a single routine
+	// that fetches events and passes them to a channel.
+	//
+	// We can still have multiple processes fetching events (ie. multiple igor services)
+	// but this greatly cuts down on duplicate work.
+	evtWork := make(chan *changes.Change)
+
+	go func() {
+		// Listen to changes. Retry on error(s) forever.
+		defer close(evtWork)
+
+		var stream changes.Stream
+		var err error
+		for {
+			stream, err = c.db.Changes()
+			if err != nil {
+				c.errs <- err
+				continue
+			}
+
+			for {
+				evt, err := stream.Next()
+				if err != nil {
+					c.errs <- err
+					break
+				}
+				if evt == nil {
+					return
+				}
+				evtWork <- evt
+			}
+		}
+	}()
+
+	for i := int64(0); i < c.opts.EventRoutines; i++ {
+		go func() {
+			c.handleEvents(c.errs, evtWork)
+		}()
+	}
 }
 
 func (c *Service) Close() error {
@@ -244,13 +251,11 @@ func (c *Service) retryTasks(tt []*structs.ObjectRef) (int64, error) {
 	enqueue := []*structs.Task{}
 	for _, t := range tasks {
 		expected, _ := taskIdToEtag[t.ID]
-		if t.ETag != expected {
+		if t.ETag != expected { // task state has changed, user may no longer want to retry
 			continue
 		}
-		err := c.killTask(t)
-		if err != nil {
-			log.Println("failed to kill task", t.ID, err)
-			continue
+		if t.QueueTaskID != "" { // task could be running: at least try to kill it
+			c.errs <- c.killTask(t)
 		}
 		enqueue = append(enqueue, t)
 	}
@@ -271,10 +276,6 @@ func (c *Service) Skip(r []*structs.ObjectRef) (int64, error) {
 		case structs.KindLayer:
 			delta, err := c.db.SetLayersStatus(structs.SKIPPED, etag, toggles)
 			count += delta
-			if err != nil {
-				return count, err
-			}
-			err = c.skipLayerTasks(toggles)
 			if err != nil {
 				return count, err
 			}
@@ -332,12 +333,13 @@ func (c *Service) Tasks(q *structs.Query) ([]*structs.Task, error) {
 }
 
 func (c *Service) CreateTasks(in []*structs.CreateTaskRequest) ([]*structs.Task, error) {
-	// validate; the input must be valid and layers / jobs where given must exist
+	// validate; the input must be valid and layers where given must exist
 	if in == nil || len(in) == 0 {
 		return nil, errors.ErrNoTasks
 	}
 	needNewJob := false
-	layerIDs := map[string]*structs.Layer{}
+	layersByID := map[string]*structs.Layer{}
+	layerIDs := []string{}
 	for _, t := range in {
 		err := validateTaskSpec(&t.TaskSpec)
 		if err != nil {
@@ -345,20 +347,30 @@ func (c *Service) CreateTasks(in []*structs.CreateTaskRequest) ([]*structs.Task,
 		}
 		if t.LayerID == "" {
 			needNewJob = true
+		} else if utils.IsValidID(t.LayerID) {
+			if _, ok := layersByID[t.LayerID]; !ok {
+				layersByID[t.LayerID] = nil
+				layerIDs = append(layerIDs, t.LayerID)
+			}
 		} else {
-			layerIDs[t.LayerID] = nil
+			return nil, fmt.Errorf("%w layer id %s is invalid", errors.ErrInvalidArg, t.LayerID)
 		}
 	}
-	ids := []string{}
-	for k := range layerIDs {
-		ids = append(ids, k)
-	}
-	layers, err := c.db.Layers(&structs.Query{Limit: len(layerIDs), LayerIDs: ids})
-	if err != nil {
-		return nil, err
-	}
-	for _, l := range layers {
-		layerIDs[l.ID] = l
+
+	// if we have layers to look up, do so
+	var layers []*structs.Layer
+	var err error
+	if len(layersByID) > 0 {
+		layers, err = c.db.Layers(&structs.Query{Limit: len(layerIDs), LayerIDs: layerIDs})
+		if err != nil {
+			return nil, err
+		}
+		if len(layers) != len(layerIDs) { // we require all the layers to exist
+			return nil, fmt.Errorf("%w expected %d layers, got %d", errors.ErrParentNoFound, len(layerIDs), len(layers))
+		}
+		for _, l := range layers {
+			layersByID[l.ID] = l
+		}
 	}
 
 	// now we can attempt to build everything
@@ -377,14 +389,14 @@ func (c *Service) CreateTasks(in []*structs.CreateTaskRequest) ([]*structs.Task,
 			Status: structs.PENDING,
 			ETag:   etag,
 		}
-		layerIDs[newLayer.ID] = newLayer
-		layerIDs[""] = newLayer
+		layersByID[newLayer.ID] = newLayer
+		layersByID[""] = newLayer
 	}
 
 	newTasks := []*structs.Task{}
 	addTasks := []*structs.Task{}
 	for _, t := range in {
-		parentLayer, ok := layerIDs[t.LayerID]
+		parentLayer, ok := layersByID[t.LayerID]
 		if !ok || parentLayer == nil {
 			return nil, fmt.Errorf("%w parent layer %s not found for task", errors.ErrParentNoFound, t.LayerID)
 		}
@@ -450,40 +462,30 @@ func (c *Service) CreateJob(cjr *structs.CreateJobRequest) (*structs.CreateJobRe
 
 func (c *Service) enqueueTasks(ts []*structs.Task) error {
 	etag := utils.NewRandomID()
-	setReady := []*structs.ObjectRef{}
 	for _, t := range ts {
 		if t.PausedAt > 0 {
-			if t.Status != structs.READY {
-				setReady = append(setReady, &structs.ObjectRef{ID: t.ID, ETag: t.ETag})
-			}
 			continue
 		}
 		queueTaskID, err := c.qu.Enqueue(t)
 		if err != nil {
-			_, derr := c.db.SetTasksStatus(structs.ERRORED, etag, []*structs.ObjectRef{&structs.ObjectRef{ID: t.ID, ETag: t.ETag}}, err.Error())
-			if err != nil {
-				log.Printf("failed to set task %s status to ERRORED, database error %v, original queue error %v\n", t.ID, derr, err)
-				continue
+			_, derr := c.db.SetTasksStatus(structs.ERRORED, etag, []*structs.ObjectRef{{ID: t.ID, ETag: t.ETag}}, err.Error())
+			if derr != nil {
+				c.errs <- fmt.Errorf("failed to set task %s status to ERRORED, database error %v, original queue error %v\n", t.ID, derr, err)
 			}
+			continue
 		}
-		_, err = c.db.SetTaskQueueID(t.ID, t.ETag, etag, queueTaskID, structs.QUEUED)
+		err = c.db.SetTaskQueueID(t.ID, t.ETag, etag, queueTaskID, structs.QUEUED)
 		if err != nil {
 			c.qu.Kill(queueTaskID)
-			_, derr := c.db.SetTasksStatus(structs.ERRORED, etag, []*structs.ObjectRef{&structs.ObjectRef{ID: t.ID, ETag: t.ETag}}, err.Error())
-			if err != nil {
-				log.Printf("failed to set task %s queue id, database error %v, original queue error %v\n", t.ID, derr, err)
-				continue
+			_, derr := c.db.SetTasksStatus(structs.ERRORED, etag, []*structs.ObjectRef{{ID: t.ID, ETag: t.ETag}}, err.Error())
+			if derr != nil {
+				c.errs <- fmt.Errorf("failed to set task %s queue id, database error %v, original queue error %v\n", t.ID, derr, err)
 			}
-		}
-		if err != nil {
+		} else {
 			t.QueueTaskID = queueTaskID
 			t.Status = structs.QUEUED
 			t.ETag = etag
 		}
-	}
-	if len(setReady) > 0 { // we couldn't enqueue these tasks, so set them as ready instead
-		_, err := c.db.SetTasksStatus(structs.READY, etag, setReady)
-		return err
 	}
 	return nil
 }
@@ -512,14 +514,14 @@ func (c *Service) handleLayerEvent(evt *changes.Change) error {
 	eNew := evt.New.(*structs.Layer)
 
 	if structs.IsFinalStatus(eNew.Status) {
-		if eNew.Status == structs.ERRORED {
-			return nil
+		if eNew.Status == structs.SKIPPED {
+			c.errs <- c.skipLayerTasks(eNew.ID)
 		}
 		jobStatus, layers, err := c.determineJobStatus(eNew.JobID)
 		if err != nil {
 			return err
 		}
-		if jobStatus == structs.COMPLETED {
+		if structs.IsFinalStatus(jobStatus) {
 			jobs, err := c.db.Jobs(&structs.Query{JobIDs: []string{eNew.JobID}, Limit: 1})
 			if err != nil {
 				return err
@@ -528,9 +530,9 @@ func (c *Service) handleLayerEvent(evt *changes.Change) error {
 				return fmt.Errorf("expected 1 job with id %s, found %d", eNew.JobID, len(jobs))
 			}
 			_, err = c.db.SetJobsStatus(
-				structs.COMPLETED,
+				jobStatus,
 				utils.NewRandomID(),
-				[]*structs.ObjectRef{&structs.ObjectRef{ID: jobs[0].ID, ETag: jobs[0].ETag}},
+				[]*structs.ObjectRef{{ID: jobs[0].ID, ETag: jobs[0].ETag}},
 			)
 			return err
 		}
@@ -563,7 +565,7 @@ func (c *Service) handleLayerEvent(evt *changes.Change) error {
 			return err
 		}
 		if desired != eNew.Status {
-			_, err = c.db.SetLayersStatus(desired, utils.NewRandomID(), []*structs.ObjectRef{&structs.ObjectRef{ID: eNew.ID, ETag: eNew.ETag}})
+			_, err = c.db.SetLayersStatus(desired, utils.NewRandomID(), []*structs.ObjectRef{{ID: eNew.ID, ETag: eNew.ETag}})
 			return err
 		}
 	}
@@ -572,13 +574,10 @@ func (c *Service) handleLayerEvent(evt *changes.Change) error {
 
 func (c *Service) enqueueLayerTasks(layerID string) (int, error) {
 	q := &structs.Query{
-		Limit:    defLimitEnqueueLayerTasks,
+		Limit:    defLimit,
 		Offset:   0,
 		LayerIDs: []string{layerID},
-		Statuses: []structs.Status{
-			structs.PENDING,
-			structs.READY,
-		},
+		Statuses: []structs.Status{structs.PENDING},
 	}
 	total := 0
 	for {
@@ -602,10 +601,9 @@ func (c *Service) enqueueLayerTasks(layerID string) (int, error) {
 
 func (c *Service) determineLayerStatus(layerID string) (structs.Status, error) {
 	q := &structs.Query{
-		Limit:    defLimitDetermineLayerStatus,
+		Limit:    defLimit,
 		Offset:   0,
 		LayerIDs: []string{layerID},
-		// ie. not COMPLETED or SKIPPED
 		Statuses: append(incompleteStates, structs.ERRORED, structs.KILLED),
 	}
 
@@ -614,13 +612,10 @@ func (c *Service) determineLayerStatus(layerID string) (structs.Status, error) {
 	nonFinalStates := 0
 	states := map[structs.Status]int64{
 		structs.PENDING: 0,
-		structs.READY:   0,
 		structs.QUEUED:  0,
 		structs.RUNNING: 0,
 		structs.KILLED:  0,
 		structs.ERRORED: 0,
-		//		structs.COMPLETED: 0,
-		//		structs.SKIPPED:   0,
 	}
 
 	// gather task metrics
@@ -661,7 +656,7 @@ func (c *Service) determineLayerStatus(layerID string) (structs.Status, error) {
 
 func (c *Service) determineJobStatus(jobID string) (structs.Status, []*structs.Layer, error) {
 	q := &structs.Query{
-		Limit:    defLimitDetermineJobStatus,
+		Limit:    defLimit,
 		JobIDs:   []string{jobID},
 		Statuses: append(incompleteStates, structs.ERRORED, structs.KILLED),
 	}
@@ -669,12 +664,13 @@ func (c *Service) determineJobStatus(jobID string) (structs.Status, []*structs.L
 	for {
 		layers, err := c.db.Layers(q)
 		if err != nil {
-			return structs.PENDING, nil, err
+			return structs.RUNNING, nil, err
 		}
 		all_layers = append(all_layers, layers...)
 		if len(layers) < q.Limit {
 			break
 		}
+		q.Offset += q.Limit
 	}
 	jobState, canRun := determineJobStatus(all_layers)
 	return jobState, canRun, nil
@@ -688,12 +684,11 @@ func (c *Service) killTask(task *structs.Task) error {
 	if err != nil {
 		return err
 	}
-	// TODO: shouldn't this change the etag :thinking:
 	etag := utils.NewRandomID()
-	_, err = c.db.SetTaskQueueID(task.ID, task.ETag, etag, "", structs.READY)
+	err = c.db.SetTaskQueueID(task.ID, task.ETag, etag, "", structs.ERRORED)
 	task.ETag = etag
 	task.QueueTaskID = ""
-	task.Status = structs.READY
+	task.Status = structs.ERRORED
 	return err
 }
 
@@ -733,228 +728,29 @@ func (c *Service) handleTaskEvent(evt *changes.Change) error {
 		if parent[0].Status == desired {
 			return nil // no update is needed
 		}
-		_, err = c.db.SetLayersStatus(desired, utils.NewRandomID(), []*structs.ObjectRef{&structs.ObjectRef{ID: parent[0].ID, ETag: parent[0].ETag}})
+		_, err = c.db.SetLayersStatus(desired, utils.NewRandomID(), []*structs.ObjectRef{{ID: parent[0].ID, ETag: parent[0].ETag}})
 		return err
 	} else if eNew.PausedAt > 0 || parent[0].PausedAt > 0 {
 		return nil
-	} else if (eNew.Status == structs.PENDING || eNew.Status == structs.READY) && eNew.QueueTaskID == "" { // we should be queued but aren't
+	} else if parent[0].Status == structs.SKIPPED { // implies we're not skipped since we're not in a final state
+		if eNew.QueueTaskID != "" {
+			c.killTask(eNew)
+		}
+		_, err := c.db.SetTasksStatus(structs.SKIPPED, utils.NewRandomID(), []*structs.ObjectRef{{ID: eNew.ID, ETag: eNew.ETag}})
+		return err
+	} else if parent[0].Status == structs.RUNNING && eNew.QueueTaskID == "" { // we should be queued but aren't
 		return c.enqueueTasks([]*structs.Task{eNew})
 	}
 
 	return nil
 }
 
-func (c *Service) tidyJob(job *structs.Job, layers []*structs.Layer) error {
-	jobState, canRun := determineJobStatus(layers)
-
-	// maybe we're done?
-	if jobState == structs.COMPLETED {
-		_, err := c.db.SetJobsStatus(
-			structs.COMPLETED,
-			utils.NewRandomID(),
-			[]*structs.ObjectRef{&structs.ObjectRef{ID: job.ID, ETag: job.ETag}},
-		)
-		return err
-	}
-
-	// layers we could set to running
-	runMap := map[string]bool{}
-	for _, l := range canRun {
-		runMap[l.ID] = true
-	}
-
-	for _, l := range layers {
-		// workout the layer status from task statuses
-		proposedStatus, err := c.determineLayerStatus(l.ID)
-		if err != nil {
-			return err
-		}
-
-		// now, if we could be run, and neither the proposed or current state is final
-		// (ie. completed, errored, skipped) then we should be running
-		jobWantsLayerToRun, _ := runMap[l.ID]
-		if jobWantsLayerToRun && !structs.IsFinalStatus(proposedStatus) {
-			proposedStatus = structs.RUNNING
-		}
-
-		// finally, if we're not already in the proposed state, set it
-		if l.Status != proposedStatus {
-			_, err = c.db.SetLayersStatus(
-				proposedStatus,
-				utils.NewRandomID(),
-				[]*structs.ObjectRef{&structs.ObjectRef{ID: l.ID, ETag: l.ETag}},
-			)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func (c *Service) handleTidyJobs(errchan chan<- error, jobs []*structs.Job) {
-	if jobs == nil || len(jobs) == 0 {
-		return
-	}
-
-	// batch get layers
-	jobIDs := []string{}
-	for _, j := range jobs {
-		jobIDs = append(jobIDs, j.ID)
-	}
-
-	query := &structs.Query{Limit: defLimitHandleTidyJobs, JobIDs: jobIDs, Statuses: incompleteStates}
-	byJob := map[string][]*structs.Layer{}
-	for {
-		layers, err := c.db.Layers(query)
-		if err != nil {
-			errchan <- err
-			return
-		}
-		for _, l := range layers {
-			jobLayers, ok := byJob[l.JobID]
-			if !ok {
-				jobLayers = []*structs.Layer{}
-			}
-			byJob[l.JobID] = append(jobLayers, l)
-		}
-		if len(layers) < query.Limit {
-			break
-		}
-		query.Offset += query.Limit
-	}
-
-	// then for each job & it's layers: tidy
-	for _, j := range jobs {
-		layers, ok := byJob[j.ID]
-		if !ok {
-			layers = []*structs.Layer{}
-		}
-		err := c.tidyJob(j, layers)
-		if err != nil {
-			errchan <- err
-			continue
-		}
-	}
-}
-
-func (c *Service) handleReapTasks(errchan chan<- error, tasks []*structs.Task) {
-	layerIDs := map[string]bool{}
-	for _, t := range tasks {
-		// tasks shouldn't be in the killed status long; they should transition to either QUEUED or ERRORED
-		// (depending on if they're retrying or not)
-		if t.Status == structs.KILLED && time.Now().Unix() > t.UpdatedAt+int64(time.Minute.Seconds()) {
-			err := c.killTask(t)
-			if err != nil {
-				errchan <- err
-			}
-		}
-
-		// we'd like to check if these need enqueuing, but for that we have to check their parent layer
-		// nb. we know the State here is READY or PENDING (see query in queueTidyTaskWork)
-		if t.QueueTaskID == "" && time.Now().Unix() > t.UpdatedAt+int64(5*time.Minute.Seconds()) && t.PausedAt == 0 {
-			layerIDs[t.LayerID] = true
-		}
-	}
-
-	// ok, look up the layers and check if we can enqueue any tasks (layer isnt paused / skipped)
-	if len(layerIDs) == 0 {
-		return
-	}
-	q := &structs.Query{Limit: 0, Offset: 0, LayerIDs: []string{}}
-	for k := range layerIDs {
-		q.LayerIDs = append(q.LayerIDs, k)
-	}
-	q.Limit = len(q.LayerIDs)
-
-	layers, err := c.db.Layers(q)
-	if err != nil {
-		errchan <- err
-		return
-	}
-	layerMap := map[string]*structs.Layer{}
-	for _, l := range layers {
-		layerMap[l.ID] = l
-	}
-
-	// check for tasks that should be queued but aren't & queue them
-	toSkip := []*structs.ObjectRef{}
-	for _, t := range tasks {
-		layer, ok := layerMap[t.LayerID]
-		if !ok {
-			continue
-		}
-		if layer.Status == structs.SKIPPED {
-			toSkip = append(toSkip, &structs.ObjectRef{ID: t.ID, ETag: t.ETag})
-			continue
-		}
-		// it seems to have failed to enqueue, try again
-		err := c.enqueueTasks([]*structs.Task{t})
-		if err != nil {
-			errchan <- err
-		}
-	}
-
-	// finally, if the layer is skipped then we'll skip the tasks too
-	if len(toSkip) > 0 {
-		_, err := c.db.SetTasksStatus(structs.SKIPPED, utils.NewRandomID(), toSkip)
-		errchan <- err
-	}
-}
-
-func (c *Service) queueTidyTaskWork(errchan chan<- error, taskWork chan<- []*structs.Task) {
-	q := &structs.Query{Limit: defLimitQueueTidyTaskWork, Offset: 0, Statuses: []structs.Status{structs.KILLED, structs.READY, structs.PENDING}}
-	for {
-		tasks, err := c.db.Tasks(q)
-		if err != nil {
-			errchan <- err
-			break
-		}
-		if len(tasks) > 0 {
-			taskWork <- tasks
-		}
-		if len(tasks) < q.Limit {
-			return
-		}
-		q.Offset += q.Limit
-	}
-}
-
-// queueTidyWork finds all jobs that are in a state that needs tidying and sends batches to worker routines
-// to process them.
-// We do this periodically just in case something died / was missed / restarted.
-func (c *Service) queueTidyJobWork(errchan chan<- error, jobWork chan<- []*structs.Job) {
-	// fetch jobs that are incomplete & pass them over to be looked at
-	q := &structs.Query{Limit: defLimitQueueTidyJobWork, Offset: 0, Statuses: incompleteStates}
-	for {
-		jobs, err := c.db.Jobs(q)
-		if err != nil {
-			errchan <- err
-			break
-		}
-		if len(jobs) > 0 {
-			jobWork <- jobs
-		}
-		if len(jobs) < q.Limit {
-			break
-		}
-		q.Offset += q.Limit
-	}
-}
-
-func (c *Service) skipLayerTasks(in []*structs.ObjectRef) error {
-	if in == nil || len(in) == 0 {
-		return nil
-	}
+func (c *Service) skipLayerTasks(layerID string) error {
 	q := &structs.Query{
-		Limit:    defLimitSkipLayerTasks,
+		Limit:    defLimit,
 		Offset:   0,
-		LayerIDs: []string{},
+		LayerIDs: []string{layerID},
 		Statuses: incompleteStates,
-	}
-	for _, r := range in {
-		q.LayerIDs = append(q.LayerIDs, r.ID)
 	}
 
 	for {
@@ -975,6 +771,52 @@ func (c *Service) skipLayerTasks(in []*structs.ObjectRef) error {
 		}
 		if len(tasks) < q.Limit {
 			return nil
+		}
+		q.Offset += q.Limit
+	}
+}
+
+func (c *Service) queueTidyLayerWork(errchan chan<- error, work chan<- *structs.Layer) {
+	q := &structs.Query{
+		Limit:         defLimit,
+		Offset:        0,
+		Statuses:      incompleteStates,
+		UpdatedBefore: timeNow() - int64(c.opts.TidyUpdateThreshold.Seconds()),
+	}
+	for {
+		layers, err := c.db.Layers(q)
+		if err != nil {
+			errchan <- err
+			break
+		}
+		for _, l := range layers {
+			work <- l
+		}
+		if len(layers) < q.Limit {
+			return
+		}
+		q.Offset += q.Limit
+	}
+}
+
+func (c *Service) queueTidyTaskWork(errchan chan<- error, work chan<- *structs.Task) {
+	q := &structs.Query{
+		Limit:         defLimit,
+		Offset:        0,
+		Statuses:      incompleteStates,
+		UpdatedBefore: timeNow() - int64(c.opts.TidyUpdateThreshold.Seconds()),
+	}
+	for {
+		tasks, err := c.db.Tasks(q)
+		if err != nil {
+			errchan <- err
+			break
+		}
+		for _, t := range tasks {
+			work <- t
+		}
+		if len(tasks) < q.Limit {
+			return
 		}
 		q.Offset += q.Limit
 	}

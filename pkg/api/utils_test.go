@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
-	"sort"
 	"strings"
 	"testing"
 
@@ -16,16 +15,16 @@ import (
 
 func TestDetermineJobStatus(t *testing.T) {
 	layers := []*structs.Layer{
-		&structs.Layer{LayerSpec: structs.LayerSpec{Name: "a", Order: 10}, Status: structs.PENDING},   // 0
-		&structs.Layer{LayerSpec: structs.LayerSpec{Name: "b", Order: 10}, Status: structs.PENDING},   // 1
-		&structs.Layer{LayerSpec: structs.LayerSpec{Name: "c", Order: 10}, Status: structs.COMPLETED}, // 2
-		&structs.Layer{LayerSpec: structs.LayerSpec{Name: "d", Order: 10}, Status: structs.SKIPPED},   // 3
-		&structs.Layer{LayerSpec: structs.LayerSpec{Name: "e", Order: 10}, Status: structs.ERRORED},   // 4
-		&structs.Layer{LayerSpec: structs.LayerSpec{Name: "f", Order: 20}, Status: structs.RUNNING},   // 5
-		&structs.Layer{LayerSpec: structs.LayerSpec{Name: "g", Order: 20}, Status: structs.QUEUED},    // 6
-		&structs.Layer{LayerSpec: structs.LayerSpec{Name: "h", Order: 20}, Status: structs.PENDING},   // 7
-		&structs.Layer{LayerSpec: structs.LayerSpec{Name: "i", Order: 30}, Status: structs.PENDING},   // 8
-		&structs.Layer{LayerSpec: structs.LayerSpec{Name: "j", Order: 30}, Status: structs.ERRORED},   // 9
+		{LayerSpec: structs.LayerSpec{Name: "a", Order: 10}, Status: structs.PENDING},   // 0
+		{LayerSpec: structs.LayerSpec{Name: "b", Order: 10}, Status: structs.PENDING},   // 1
+		{LayerSpec: structs.LayerSpec{Name: "c", Order: 10}, Status: structs.COMPLETED}, // 2
+		{LayerSpec: structs.LayerSpec{Name: "d", Order: 10}, Status: structs.SKIPPED},   // 3
+		{LayerSpec: structs.LayerSpec{Name: "e", Order: 10}, Status: structs.ERRORED},   // 4
+		{LayerSpec: structs.LayerSpec{Name: "f", Order: 20}, Status: structs.RUNNING},   // 5
+		{LayerSpec: structs.LayerSpec{Name: "g", Order: 20}, Status: structs.QUEUED},    // 6
+		{LayerSpec: structs.LayerSpec{Name: "h", Order: 20}, Status: structs.PENDING},   // 7
+		{LayerSpec: structs.LayerSpec{Name: "i", Order: 30}, Status: structs.PENDING},   // 8
+		{LayerSpec: structs.LayerSpec{Name: "j", Order: 30}, Status: structs.ERRORED},   // 9
 	}
 
 	cases := []struct {
@@ -53,10 +52,16 @@ func TestDetermineJobStatus(t *testing.T) {
 			ExpectLayers: []*structs.Layer{},
 		},
 		{
-			Name:         "Running-LayerErrored",
+			Name:         "Errored-LayerErrored",
 			In:           []*structs.Layer{layers[2], layers[4]},
-			ExpectStatus: structs.RUNNING,
+			ExpectStatus: structs.ERRORED,
 			ExpectLayers: []*structs.Layer{},
+		},
+		{
+			Name:         "Running-LayerErrored", // we can keep going for now, but we will eventually flip to errored
+			In:           []*structs.Layer{layers[0], layers[1], layers[4]},
+			ExpectStatus: structs.RUNNING,
+			ExpectLayers: []*structs.Layer{layers[0], layers[1]},
 		},
 		{
 			Name:         "Running-LayerSkip",
@@ -81,13 +86,8 @@ func TestDetermineJobStatus(t *testing.T) {
 
 			status, runnable := determineJobStatus(c.In)
 
-			// since our test gives "expect layers" in order, we need to sort the output
-			sort.Slice(runnable, func(i, j int) bool {
-				return runnable[i].Name < runnable[j].Name
-			})
-
 			assert.Equal(t, c.ExpectStatus, status)
-			assert.Equal(t, c.ExpectLayers, runnable)
+			assert.ElementsMatch(t, c.ExpectLayers, runnable)
 		})
 	}
 }
@@ -102,8 +102,6 @@ func TestLayerCanHaveMoreTasks(t *testing.T) {
 		{In: structs.PENDING, PausedAt: 100, Expect: true},
 		{In: structs.QUEUED, Expect: true},
 		{In: structs.QUEUED, PausedAt: 100, Expect: true},
-		{In: structs.READY, Expect: true},
-		{In: structs.READY, PausedAt: 100, Expect: true},
 		{In: structs.RUNNING, Expect: false},
 		{In: structs.RUNNING, PausedAt: 100, Expect: true},
 		{In: structs.COMPLETED, Expect: false},
@@ -394,11 +392,7 @@ func TestBuildJob(t *testing.T) {
 						assert.Equal(t, k.Name, c.In.Layers[i].Tasks[j].Name)
 						assert.Equal(t, k.PausedAt, c.In.Layers[i].Tasks[j].PausedAt)
 						assert.Equal(t, k.Retries, c.In.Layers[i].Tasks[j].Retries)
-						if l.Status == structs.RUNNING && l.PausedAt == 0 {
-							assert.Equal(t, k.Status, structs.READY)
-						} else {
-							assert.Equal(t, k.Status, structs.PENDING)
-						}
+						assert.Equal(t, k.Status, structs.PENDING)
 						seenTasks[k.ID] = true
 					}
 				} else {

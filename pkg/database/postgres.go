@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/voidshard/igor/pkg/database/changes"
+	"github.com/voidshard/igor/pkg/errors"
 	"github.com/voidshard/igor/pkg/structs"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -160,29 +161,34 @@ func (p *Postgres) SetTasksStatus(status structs.Status, newTag string, ids []*s
 	return 0, err
 }
 
-func (p *Postgres) SetTaskQueueID(taskID, etag, newEtag, queueTaskID string, state structs.Status) (int64, error) {
+func (p *Postgres) SetTaskQueueID(taskID, etag, newEtag, queueTaskID string, state structs.Status) error {
 	qstr := fmt.Sprintf(`UPDATE %s SET queue_task_id=$1, etag=$2, updated_at=$3, status=$4 WHERE id=$5 AND etag=$6;`, string(structs.KindTask))
 	args := []interface{}{queueTaskID, newEtag, timeNow(), state, taskID, etag}
 
 	ctx := context.Background()
 	conn, err := p.pool.Acquire(ctx)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	defer conn.Release()
 
 	info, err := conn.Exec(ctx, qstr, args...)
 	if err == nil {
-		return info.RowsAffected(), nil
+		return err
 	}
-	return 0, err
+	if info.RowsAffected() == 0 {
+		return errors.ErrETagMismatch
+	}
+	return nil
 }
 
 func (p *Postgres) Jobs(q *structs.Query) ([]*structs.Job, error) {
 	where, args := toSqlQuery(map[string][]string{
 		"id":     q.JobIDs,
 		"status": statusToStrings(q.Statuses),
-	})
+	},
+		q.UpdatedBefore, q.UpdatedAfter, q.CreatedBefore, q.CreatedAfter,
+	)
 	args = append(args, q.Limit, q.Offset)
 
 	// TODO: prepare statement
@@ -227,7 +233,9 @@ func (p *Postgres) Layers(q *structs.Query) ([]*structs.Layer, error) {
 		"job_id": q.JobIDs,
 		"id":     q.LayerIDs,
 		"status": statusToStrings(q.Statuses),
-	})
+	},
+		q.UpdatedBefore, q.UpdatedAfter, q.CreatedBefore, q.CreatedAfter,
+	)
 	args = append(args, q.Limit, q.Offset)
 
 	qstr := fmt.Sprintf(`SELECT name, paused_at, order, id, status, etag, job_id, created_at, updated_at FROM %s %s 
@@ -276,7 +284,9 @@ func (p *Postgres) Tasks(q *structs.Query) ([]*structs.Task, error) {
 		"layer_id": q.LayerIDs,
 		"id":       q.TaskIDs,
 		"status":   statusToStrings(q.Statuses),
-	})
+	},
+		q.UpdatedBefore, q.UpdatedAfter, q.CreatedBefore, q.CreatedAfter,
+	)
 	args = append(args, q.Limit, q.Offset)
 
 	qstr := fmt.Sprintf(`SELECT type, args, name, paused_at, id, status, etag, job_id, layer_id, queue_task_id, message, created_at, updated_at FROM %s %s
@@ -375,9 +385,9 @@ func (p *Postgres) setPaused(table string, at int64, newTag string, ids []*struc
 	return 0, err
 }
 
-func toSqlQuery(in map[string][]string) (string, []interface{}) {
-	if in == nil || len(in) == 0 {
-		return "", []interface{}{}
+func toSqlQuery(in map[string][]string, upB, upA, crB, crA int64) (string, []interface{}) {
+	if in == nil {
+		in = map[string][]string{}
 	}
 	and := []string{}
 	args := []interface{}{}
@@ -388,6 +398,22 @@ func toSqlQuery(in map[string][]string) (string, []interface{}) {
 		s, a := toSqlIn(len(args)+1, k, v)
 		and = append(and, s)
 		args = append(args, a...)
+	}
+	if upB > 0 { // updated before
+		args = append(args, upB)
+		and = append(and, fmt.Sprintf("updated_at >= $%d", len(args)))
+	}
+	if upA > 0 { // updated after
+		args = append(args, upA)
+		and = append(and, fmt.Sprintf("updated_at <= $%d", len(args)))
+	}
+	if crB > 0 { // created before
+		args = append(args, crB)
+		and = append(and, fmt.Sprintf("created_at >= $%d", len(args)))
+	}
+	if crA > 0 { // created after
+		args = append(args, crA)
+		and = append(and, fmt.Sprintf("created_at <= $%d", len(args)))
 	}
 	if len(and) == 0 {
 		return "", args

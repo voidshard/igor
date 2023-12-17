@@ -14,7 +14,6 @@ func TestIsFinalStatus(t *testing.T) {
 	}{
 		{"StatusUndefined", "x", false},
 		{"StatusPending", PENDING, false},
-		{"StatusReady", READY, false},
 		{"StatusQueued", QUEUED, false},
 		{"StatusRunning", RUNNING, false},
 		{"StatusKilled", KILLED, true},
@@ -38,7 +37,6 @@ func TestToStatus(t *testing.T) {
 	}{
 		{"StatusUndefined", "x", ""},
 		{"StatusPending", "PENDING", PENDING},
-		{"StatusReady", "READY", READY},
 		{"StatusQueued", "QUEUED", QUEUED},
 		{"StatusRunning", "RUNNING", RUNNING},
 		{"StatusKilled", "KILLED", KILLED},

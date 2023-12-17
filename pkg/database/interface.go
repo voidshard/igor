@@ -15,7 +15,7 @@ type Database interface {
 	SetJobsStatus(status structs.Status, newTag string, ids []*structs.ObjectRef) (int64, error)
 	SetLayersStatus(status structs.Status, newTag string, ids []*structs.ObjectRef) (int64, error)
 	SetTasksStatus(status structs.Status, newTag string, ids []*structs.ObjectRef, msg ...string) (int64, error)
-	SetTaskQueueID(taskID, etag, newEtag, queueTaskID string, newState structs.Status) (int64, error)
+	SetTaskQueueID(taskID, etag, newEtag, queueTaskID string, newState structs.Status) error
 
 	Jobs(q *structs.Query) ([]*structs.Job, error)
 	Layers(q *structs.Query) ([]*structs.Layer, error)

@@ -10,10 +10,14 @@ import (
 
 func TestToSqlQuery(t *testing.T) {
 	cases := []struct {
-		Name        string
-		In          map[string][]string
-		ExpectQuery string
-		ExpectArgs  []interface{}
+		Name          string
+		In            map[string][]string
+		ExpectQuery   string
+		ExpectArgs    []interface{}
+		UpdatedBefore int64
+		UpdatedAfter  int64
+		CreatedBefore int64
+		CreatedAfter  int64
 	}{
 		{
 			Name:        "Nil",
@@ -26,6 +30,16 @@ func TestToSqlQuery(t *testing.T) {
 			In:          map[string][]string{},
 			ExpectQuery: "",
 			ExpectArgs:  []interface{}{},
+		},
+		{
+			Name:          "TimeFilters",
+			In:            map[string][]string{},
+			ExpectQuery:   "WHERE updated_at >= $1 AND updated_at <= $2 AND created_at >= $3 AND created_at <= $4",
+			ExpectArgs:    []interface{}{int64(100), int64(200), int64(300), int64(400)},
+			UpdatedBefore: 100,
+			UpdatedAfter:  200,
+			CreatedBefore: 300,
+			CreatedAfter:  400,
 		},
 		{
 			Name: "OneField",
@@ -49,14 +63,28 @@ func TestToSqlQuery(t *testing.T) {
 				"field1": []string{"a", "b", "c"},
 				"field2": []string{"d", "e", "f"},
 			},
+			// TODO: we iterate a map; order is not guaranteed
 			ExpectQuery: "WHERE field1 IN ($1, $2, $3) AND field2 IN ($4, $5, $6)",
 			ExpectArgs:  []interface{}{"a", "b", "c", "d", "e", "f"},
+		},
+		{
+			Name: "MultipleFieldsMultipleArgsWithTimeFilters",
+			In: map[string][]string{
+				"field1": []string{"a", "b", "c"},
+				"field2": []string{"d", "e", "f"},
+			},
+			ExpectQuery:   "WHERE field1 IN ($1, $2, $3) AND field2 IN ($4, $5, $6) AND updated_at >= $7 AND updated_at <= $8 AND created_at >= $9 AND created_at <= $10",
+			ExpectArgs:    []interface{}{"a", "b", "c", "d", "e", "f", int64(100), int64(200), int64(300), int64(400)},
+			UpdatedBefore: 100,
+			UpdatedAfter:  200,
+			CreatedBefore: 300,
+			CreatedAfter:  400,
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
-			qstr, args := toSqlQuery(c.In)
+			qstr, args := toSqlQuery(c.In, c.UpdatedBefore, c.UpdatedAfter, c.CreatedBefore, c.CreatedAfter)
 
 			assert.Equal(t, c.ExpectQuery, qstr)
 			assert.Equal(t, c.ExpectArgs, args)
@@ -163,7 +191,7 @@ func TestToJobSqlArgs(t *testing.T) {
 			Name: "name",
 		},
 		ID:        "id",
-		Status:    structs.READY,
+		Status:    structs.RUNNING,
 		ETag:      "etag",
 		CreatedAt: 100,
 		UpdatedAt: 200,
@@ -190,7 +218,7 @@ func TestToLayerSqlArgs(t *testing.T) {
 			Order:    12,
 		},
 		ID:        "id",
-		Status:    structs.READY,
+		Status:    structs.PENDING,
 		ETag:      "etag",
 		JobID:     "jobid",
 		CreatedAt: 200,
@@ -223,7 +251,7 @@ func TestToTaskSqlArgs(t *testing.T) {
 			Retries:  12,
 		},
 		ID:          "id",
-		Status:      structs.READY,
+		Status:      structs.PENDING,
 		ETag:        "etag",
 		JobID:       "jobid",
 		LayerID:     "layerid",
@@ -274,7 +302,6 @@ func TestStatusToStrings(t *testing.T) {
 			Name: "All",
 			In: []structs.Status{
 				structs.PENDING,
-				structs.READY,
 				structs.QUEUED,
 				structs.RUNNING,
 				structs.COMPLETED,
@@ -284,7 +311,6 @@ func TestStatusToStrings(t *testing.T) {
 			},
 			Expect: []string{
 				"PENDING",
-				"READY",
 				"QUEUED",
 				"RUNNING",
 				"COMPLETED",
