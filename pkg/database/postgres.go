@@ -43,7 +43,7 @@ func (p *Postgres) InsertJob(j *structs.Job, ls []*structs.Layer, ts []*structs.
 		largs = append(largs, a...)
 	}
 	lstr := strings.Join(lstrs, ",") // join so its (),(),() etc
-	lstr = fmt.Sprintf(`INSERT INTO %s (name, paused_at, order, id, status, etag, job_id, created_at, updated_at) VALUES %s;`, string(structs.KindLayer), lstr)
+	lstr = fmt.Sprintf(`INSERT INTO %s (name, paused_at, priority, id, status, etag, job_id, created_at, updated_at) VALUES %s;`, string(structs.KindLayer), lstr)
 
 	// tasks
 	tstrs, targs := []string{}, []interface{}{}
@@ -238,7 +238,7 @@ func (p *Postgres) Layers(q *structs.Query) ([]*structs.Layer, error) {
 	)
 	args = append(args, q.Limit, q.Offset)
 
-	qstr := fmt.Sprintf(`SELECT name, paused_at, order, id, status, etag, job_id, created_at, updated_at FROM %s %s 
+	qstr := fmt.Sprintf(`SELECT name, paused_at, priority, id, status, etag, job_id, created_at, updated_at FROM %s %s 
 	ORDER BY created_at DESC LIMIT $%d OFFSET $%d;`,
 		string(structs.KindLayer), where, len(args)-1, len(args),
 	)
@@ -261,7 +261,7 @@ func (p *Postgres) Layers(q *structs.Query) ([]*structs.Layer, error) {
 		err = rows.Scan(
 			&l.Name,
 			&l.PausedAt,
-			&l.Order,
+			&l.Priority,
 			&l.ID,
 			&l.Status,
 			&l.ETag,
@@ -484,7 +484,7 @@ func toLayerSqlArgs(offset int, l *structs.Layer) (string, []interface{}) {
 	return fmt.Sprintf("(%s)", strings.Join(vals, ", ")), []interface{}{
 		l.Name,
 		l.PausedAt,
-		l.Order,
+		l.Priority,
 		l.ID,
 		l.Status,
 		l.ETag,

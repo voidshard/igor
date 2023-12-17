@@ -44,7 +44,7 @@ class _LayerDetailsWidget(_JobDetailsWidget):
         super(_LayerDetailsWidget, self).__init__(parent, object_id)
 
         self._paused_at = self._add_widget_row("Paused At:", 6, QLabel(), "paused at")
-        self._widget_order = self._add_widget_row("Order:", 7, QLabel(), "layer order")
+        self._widget_priority = self._add_widget_row("Priority:", 7, QLabel(), "layer priority")
         self._widget_job_id = self._add_widget_row("JobID:", 8, QLabel(), "job id")
 
     def set_widgets(self, obj):
@@ -56,7 +56,7 @@ class _LayerDetailsWidget(_JobDetailsWidget):
         super().set_widgets(obj)
 
         self._paused_at.setText(obj.paused_at)
-        self._widget_order.setText(f"{obj.order}")
+        self._widget_priority.setText(f"{obj.priority}")
         self._widget_job_id.setText(f"{obj.job_id}")
 
     def fetch_object(self):

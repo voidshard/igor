@@ -385,13 +385,13 @@ func TestCreateJob(t *testing.T) {
 				},
 				Layers: []structs.JobLayerRequest{
 					{
-						LayerSpec: structs.LayerSpec{Name: "a", Order: 10},
+						LayerSpec: structs.LayerSpec{Name: "a", Priority: 10},
 						Tasks: []structs.TaskSpec{
 							{Name: "t1", Type: "foo"},
 							{Name: "t2", Type: "bar"},
 						},
 					},
-					{LayerSpec: structs.LayerSpec{Name: "b", Order: 10}},
+					{LayerSpec: structs.LayerSpec{Name: "b", Priority: 10}},
 				},
 			},
 		},
@@ -413,7 +413,7 @@ func TestCreateJob(t *testing.T) {
 			assert.Equal(t, len(c.In.Layers), len(resp.Layers))
 			for i, l := range c.In.Layers {
 				assert.Equal(t, l.Name, resp.Layers[i].Name)
-				assert.Equal(t, l.Order, resp.Layers[i].Order)
+				assert.Equal(t, l.Priority, resp.Layers[i].Priority)
 				assert.Equal(t, len(l.Tasks), len(resp.Layers[i].Tasks))
 			}
 		})
@@ -491,10 +491,10 @@ func TestHandleLayerEventFinalState(t *testing.T) {
 	layer := &structs.Layer{ID: "l1", ETag: "e1", JobID: "j1"}
 	states := append(incompleteStates, structs.ERRORED, structs.KILLED)
 	layers := []*structs.Layer{
-		{LayerSpec: structs.LayerSpec{Name: "a", Order: 10}, Status: structs.PENDING}, // 0
-		{LayerSpec: structs.LayerSpec{Name: "b", Order: 10}, Status: structs.SKIPPED}, // 1
-		{LayerSpec: structs.LayerSpec{Name: "c", Order: 10}, Status: structs.ERRORED}, // 2
-		{LayerSpec: structs.LayerSpec{Name: "d", Order: 10}, Status: structs.RUNNING}, // 3
+		{LayerSpec: structs.LayerSpec{Name: "a", Priority: 10}, Status: structs.PENDING}, // 0
+		{LayerSpec: structs.LayerSpec{Name: "b", Priority: 10}, Status: structs.SKIPPED}, // 1
+		{LayerSpec: structs.LayerSpec{Name: "c", Priority: 10}, Status: structs.ERRORED}, // 2
+		{LayerSpec: structs.LayerSpec{Name: "d", Priority: 10}, Status: structs.RUNNING}, // 3
 	}
 
 	cases := []struct {
@@ -867,10 +867,10 @@ func TestDetermineLayerStatus(t *testing.T) {
 
 func TestSvcDetermineJobStatus(t *testing.T) {
 	layers := []*structs.Layer{
-		{LayerSpec: structs.LayerSpec{Name: "a", Order: 10}, Status: structs.PENDING},   // 0
-		{LayerSpec: structs.LayerSpec{Name: "b", Order: 10}, Status: structs.COMPLETED}, // 1
-		{LayerSpec: structs.LayerSpec{Name: "c", Order: 10}, Status: structs.SKIPPED},   // 2
-		{LayerSpec: structs.LayerSpec{Name: "d", Order: 10}, Status: structs.ERRORED},   // 3
+		{LayerSpec: structs.LayerSpec{Name: "a", Priority: 10}, Status: structs.PENDING},   // 0
+		{LayerSpec: structs.LayerSpec{Name: "b", Priority: 10}, Status: structs.COMPLETED}, // 1
+		{LayerSpec: structs.LayerSpec{Name: "c", Priority: 10}, Status: structs.SKIPPED},   // 2
+		{LayerSpec: structs.LayerSpec{Name: "d", Priority: 10}, Status: structs.ERRORED},   // 3
 	}
 	jid := "j1"
 	states := append(incompleteStates, structs.ERRORED, structs.KILLED)

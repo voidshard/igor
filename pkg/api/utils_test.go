@@ -15,16 +15,16 @@ import (
 
 func TestDetermineJobStatus(t *testing.T) {
 	layers := []*structs.Layer{
-		{LayerSpec: structs.LayerSpec{Name: "a", Order: 10}, Status: structs.PENDING},   // 0
-		{LayerSpec: structs.LayerSpec{Name: "b", Order: 10}, Status: structs.PENDING},   // 1
-		{LayerSpec: structs.LayerSpec{Name: "c", Order: 10}, Status: structs.COMPLETED}, // 2
-		{LayerSpec: structs.LayerSpec{Name: "d", Order: 10}, Status: structs.SKIPPED},   // 3
-		{LayerSpec: structs.LayerSpec{Name: "e", Order: 10}, Status: structs.ERRORED},   // 4
-		{LayerSpec: structs.LayerSpec{Name: "f", Order: 20}, Status: structs.RUNNING},   // 5
-		{LayerSpec: structs.LayerSpec{Name: "g", Order: 20}, Status: structs.QUEUED},    // 6
-		{LayerSpec: structs.LayerSpec{Name: "h", Order: 20}, Status: structs.PENDING},   // 7
-		{LayerSpec: structs.LayerSpec{Name: "i", Order: 30}, Status: structs.PENDING},   // 8
-		{LayerSpec: structs.LayerSpec{Name: "j", Order: 30}, Status: structs.ERRORED},   // 9
+		{LayerSpec: structs.LayerSpec{Name: "a", Priority: 10}, Status: structs.PENDING},   // 0
+		{LayerSpec: structs.LayerSpec{Name: "b", Priority: 10}, Status: structs.PENDING},   // 1
+		{LayerSpec: structs.LayerSpec{Name: "c", Priority: 10}, Status: structs.COMPLETED}, // 2
+		{LayerSpec: structs.LayerSpec{Name: "d", Priority: 10}, Status: structs.SKIPPED},   // 3
+		{LayerSpec: structs.LayerSpec{Name: "e", Priority: 10}, Status: structs.ERRORED},   // 4
+		{LayerSpec: structs.LayerSpec{Name: "f", Priority: 20}, Status: structs.RUNNING},   // 5
+		{LayerSpec: structs.LayerSpec{Name: "g", Priority: 20}, Status: structs.QUEUED},    // 6
+		{LayerSpec: structs.LayerSpec{Name: "h", Priority: 20}, Status: structs.PENDING},   // 7
+		{LayerSpec: structs.LayerSpec{Name: "i", Priority: 30}, Status: structs.PENDING},   // 8
+		{LayerSpec: structs.LayerSpec{Name: "j", Priority: 30}, Status: structs.ERRORED},   // 9
 	}
 
 	cases := []struct {
@@ -275,7 +275,7 @@ func TestBuildJob(t *testing.T) {
 		Name        string
 		In          *structs.CreateJobRequest
 		TotalTasks  int
-		LowestOrder int64
+		LowestPriority int64
 	}{
 		{
 			Name: "Ok",
@@ -287,7 +287,7 @@ func TestBuildJob(t *testing.T) {
 					{
 						LayerSpec: structs.LayerSpec{
 							Name:  "testlayer1",
-							Order: 10,
+							Priority: 10,
 						},
 						Tasks: []structs.TaskSpec{
 							{
@@ -309,7 +309,7 @@ func TestBuildJob(t *testing.T) {
 					{
 						LayerSpec: structs.LayerSpec{
 							Name:  "testlayer2",
-							Order: 10,
+							Priority: 10,
 						},
 						Tasks: []structs.TaskSpec{
 							{
@@ -324,7 +324,7 @@ func TestBuildJob(t *testing.T) {
 					{
 						LayerSpec: structs.LayerSpec{
 							Name:  "testlayer3",
-							Order: 20,
+							Priority: 20,
 						},
 						Tasks: []structs.TaskSpec{
 							{
@@ -341,14 +341,14 @@ func TestBuildJob(t *testing.T) {
 					{
 						LayerSpec: structs.LayerSpec{
 							Name:  "testlayer4",
-							Order: 30,
+							Priority: 30,
 						},
 						Tasks: []structs.TaskSpec{},
 					},
 				},
 			},
 			TotalTasks:  6,
-			LowestOrder: 10,
+			LowestPriority: 10,
 		},
 	}
 
@@ -371,8 +371,8 @@ func TestBuildJob(t *testing.T) {
 				assert.Equal(t, l.JobID, resJob.ID)
 				assert.Equal(t, l.Name, c.In.Layers[i].Name)
 				assert.Equal(t, l.PausedAt, c.In.Layers[i].PausedAt)
-				assert.Equal(t, l.Order, c.In.Layers[i].Order)
-				if l.Order == c.LowestOrder {
+				assert.Equal(t, l.Priority, c.In.Layers[i].Priority)
+				if l.Priority == c.LowestPriority {
 					assert.Equal(t, l.Status, structs.RUNNING)
 				} else {
 					assert.Equal(t, l.Status, structs.PENDING)
@@ -485,7 +485,7 @@ func TestValidateJobRequest(t *testing.T) {
 				},
 				Layers: []structs.JobLayerRequest{
 					{
-						LayerSpec: structs.LayerSpec{Name: "test", Order: 10},
+						LayerSpec: structs.LayerSpec{Name: "test", Priority: 10},
 						Tasks: []structs.TaskSpec{
 							{Name: "test", Type: "test", Args: []byte("test"), Retries: 1},
 						},

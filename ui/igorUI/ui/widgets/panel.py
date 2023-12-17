@@ -39,7 +39,7 @@ class Panel(QDockWidget):
     def _add_toolbar_actions(self):
         """For adding child actions.
 
-        This exists so that actions (buttons) are added in the order of
+        This exists so that actions (buttons) are added in the priority of
          child -> parent -> parent of parent
 
         """

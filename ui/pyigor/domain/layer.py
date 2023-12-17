@@ -7,7 +7,7 @@ class Layer:
         self.name = self.key = data.get("name")
         self.paused = data.get("paused_at") > 0
         self.paused_at = utils.human_time(data.get("paused_at")) if self.paused else ""
-        self.order = data.get("order", 0)
+        self.priority = data.get("priority", 0)
         self.id = data.get("id")
         self.status = data.get("status")
         self.etag = data.get("etag")

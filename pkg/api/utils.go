@@ -16,11 +16,11 @@ var (
 
 func determineJobStatus(layers []*structs.Layer) (structs.Status, []*structs.Layer) {
 	sort.Slice(layers, func(i, j int) bool {
-		return layers[i].Order < layers[j].Order
+		return layers[i].Priority < layers[j].Priority
 	})
 
-	// finds the first layer that we can run (ie, all layers with lower order are done)
-	mustRunNext := []*structs.Layer{} // layers of the same order that must run next
+	// finds the first layer that we can run (ie, all layers with lower priority are done)
+	mustRunNext := []*structs.Layer{} // layers of the same priority that must run next
 	canRun := []*structs.Layer{}      // layers we can & should set to running
 	var lowest int64
 	seenErrored := false
@@ -28,16 +28,16 @@ func determineJobStatus(layers []*structs.Layer) (structs.Status, []*structs.Lay
 		if l.Status == structs.SKIPPED || l.Status == structs.COMPLETED {
 			continue
 		}
-		if len(mustRunNext) > 0 && l.Order > lowest {
-			// ie. if there's another layer that can run, whose order is lower than this one
+		if len(mustRunNext) > 0 && l.Priority > lowest {
+			// ie. if there's another layer that can run, whose priority is lower than this one
 			// that layer must run first (and we cannot run this at the same time)
 			break
 		}
 		// otherwise, if all previous layers haven't died (error/killed) and either
-		// - we have no layers yet (nb. we're processing in order order)
-		// - our order is less than or equal to the lowest order layer that can run
+		// - we have no layers yet (nb. we're processing in priority priority)
+		// - our priority is less than or equal to the lowest priority layer that can run
 		// then this layer should run next
-		lowest = l.Order
+		lowest = l.Priority
 		mustRunNext = append(mustRunNext, l)
 
 		// record if we've seen an errored layer
@@ -114,10 +114,10 @@ func buildJob(cjr *structs.CreateJobRequest) (*structs.Job, []*structs.Layer, []
 		ETag:    etag,
 	}
 
-	lowestOrder := cjr.Layers[0].Order
+	lowestPriority := cjr.Layers[0].Priority
 	for _, l := range cjr.Layers {
-		if l.Order < lowestOrder {
-			lowestOrder = l.Order
+		if l.Priority < lowestPriority {
+			lowestPriority = l.Priority
 		}
 	}
 
@@ -132,7 +132,7 @@ func buildJob(cjr *structs.CreateJobRequest) (*structs.Job, []*structs.Layer, []
 			Status:    structs.PENDING,
 			ETag:      etag,
 		}
-		if layer.Order == lowestOrder {
+		if layer.Priority == lowestPriority {
 			layer.Status = structs.RUNNING
 		}
 		layers = append(layers, layer)

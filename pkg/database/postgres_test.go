@@ -63,7 +63,7 @@ func TestToSqlQuery(t *testing.T) {
 				"field1": []string{"a", "b", "c"},
 				"field2": []string{"d", "e", "f"},
 			},
-			// TODO: we iterate a map; order is not guaranteed
+			// TODO: we iterate a map; priority is not guaranteed
 			ExpectQuery: "WHERE field1 IN ($1, $2, $3) AND field2 IN ($4, $5, $6)",
 			ExpectArgs:  []interface{}{"a", "b", "c", "d", "e", "f"},
 		},
@@ -215,7 +215,7 @@ func TestToLayerSqlArgs(t *testing.T) {
 		LayerSpec: structs.LayerSpec{
 			Name:     "name",
 			PausedAt: 100,
-			Order:    12,
+			Priority:    12,
 		},
 		ID:        "id",
 		Status:    structs.PENDING,
@@ -231,7 +231,7 @@ func TestToLayerSqlArgs(t *testing.T) {
 	assert.Equal(t, []interface{}{
 		in.Name,
 		in.PausedAt,
-		in.Order,
+		in.Priority,
 		in.ID,
 		in.Status,
 		in.ETag,

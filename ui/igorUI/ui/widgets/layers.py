@@ -51,7 +51,7 @@ class _LayerWidget(PanelWidget):
         view.setColumnWidth(headers.index('Name'), 100)
         view.setColumnWidth(headers.index('ID'), 250)
         view.setColumnWidth(headers.index('Status'), 80)
-        view.setColumnWidth(headers.index('Order'), 30)
+        view.setColumnWidth(headers.index('Priority'), 30)
         view.setColumnWidth(headers.index('PausedAt'), 100)
         view.setColumnWidth(headers.index('CreatedAt'), 100)
         view.setColumnWidth(headers.index('UpdatedAt'), 100)
@@ -139,7 +139,7 @@ class _LayerModel(AbstractEditableTableModel):
         "Name",
         "ID",
         "Status",
-        "Order",
+        "Priority",
         "PausedAt",
         "CreatedAt",
         "UpdatedAt",
@@ -149,7 +149,7 @@ class _LayerModel(AbstractEditableTableModel):
         0: lambda n: n.name,
         1: lambda n: n.id,
         2: lambda n: n.status,
-        3: lambda n: n.order,
+        3: lambda n: n.priority,
         4: lambda n: n.paused_at,
         5: lambda n: n.created_at,
         6: lambda n: n.updated_at,

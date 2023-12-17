@@ -3,7 +3,7 @@
    "layers": [
        {
             "name": "test-layer-01",
-            "order": 0,
+            "priority": 0,
             "paused_at": 100,
             "tasks": [
                 {
@@ -27,7 +27,7 @@
        },
        {
             "name": "test-layer-02",
-            "order": 0,
+            "priority": 0,
             "paused_at": 100,
             "tasks": [
                 {
@@ -49,7 +49,7 @@
        },
        {
             "name": "test-layer-03",
-            "order": 10,
+            "priority": 10,
             "paused_at": 0,
             "tasks": []
        }
