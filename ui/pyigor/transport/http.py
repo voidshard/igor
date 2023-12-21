@@ -154,10 +154,9 @@ class IgorClient:
                 found += 1
                 yield result_cls(data)
 
-    def _perform_action(self, endpoint, obj_id, obj_etag, action):
+    def _perform_action(self, kind, obj_id, obj_etag, action):
         """Perform some http action (PATCH), return standard UpdateReply obj.
 
-        :param endpoint:
         :param obj_id:
         :param obj_etag:
 
@@ -165,12 +164,12 @@ class IgorClient:
         headers = self._headers
         headers["Etag"] = obj_etag
 
-        url = self._url + "/" + endpoint + "/" + action
+        url = self._url + "/" + action
 
         logger.info(f"    --> PATCH {url}")
         result = requests.patch(
             url,
-            data=json.dumps([{"id": obj_id, "etag": obj_etag}]),
+            data=json.dumps([{"kind": kind, "id": obj_id, "etag": obj_etag}]),
             cert=self._pem,
             headers=headers,
             verify=self._verify_ssl,
@@ -189,7 +188,7 @@ class IgorClient:
         :param tag:
 
         """
-        return self._perform_action(self._layers, id_, tag, self._action_retry)
+        return self._perform_action("Layer", id_, tag, self._action_retry)
 
     def retry_task(self, id_: str, tag: str):
         """Retry the given task by ID.
@@ -200,7 +199,7 @@ class IgorClient:
         :param tag:
 
         """
-        return self._perform_action(self._tasks, id_, tag, self._action_retry)
+        return self._perform_action("Task", id_, tag, self._action_retry)
 
     def pause_layer(self, id_: str, tag: str):
         """Pause the given layer by ID.
@@ -212,7 +211,7 @@ class IgorClient:
         :param tag:
 
         """
-        return self._perform_action(self._layers, id_, tag, self._action_pause)
+        return self._perform_action("Layer", id_, tag, self._action_pause)
 
     def unpause_layer(self, id_: str, tag: str):
         """Unpause the given layer by ID.
@@ -224,7 +223,7 @@ class IgorClient:
         :param tag:
 
         """
-        return self._perform_action(self._layers, id_, tag, self._action_unpause)
+        return self._perform_action("Layer", id_, tag, self._action_unpause)
 
     def pause_task(self, id_: str, tag: str):
         """Pause the given task by ID.
@@ -235,7 +234,7 @@ class IgorClient:
         :param tag:
 
         """
-        return self._perform_action(self._tasks, id_, tag, self._action_pause)
+        return self._perform_action("Task", id_, tag, self._action_pause)
 
     def unpause_task(self, id_: str, tag: str):
         """Unpause the given task by ID.
@@ -246,7 +245,7 @@ class IgorClient:
         :param tag:
 
         """
-        return self._perform_action(self._tasks, id_, tag, self._action_unpause)
+        return self._perform_action("Task", id_, tag, self._action_unpause)
 
     def kill_task(self, id_: str, tag: str):
         """Kill a running task.
@@ -255,7 +254,7 @@ class IgorClient:
         :param tag:
 
         """
-        return self._perform_action(self._tasks, id_, tag, self._action_kill)
+        return self._perform_action("Task", id_, tag, self._action_kill)
 
     def skip_layer(self, id_: str, tag: str):
         """Mark all tasks in this layer as 'skipped'
@@ -266,7 +265,7 @@ class IgorClient:
         :param tag:
 
         """
-        return self._perform_action(self._layers, id_, tag, self._action_skip)
+        return self._perform_action("Layer", id_, tag, self._action_skip)
 
     def skip_task(self, id_: str, tag: str):
         """Mark the given task as 'skipped'
@@ -277,7 +276,7 @@ class IgorClient:
         :param tag:
 
         """
-        return self._perform_action(self._tasks, id_, tag, self._action_skip)
+        return self._perform_action("Task", id_, tag, self._action_skip)
 
     def get_jobs(self, states=None, job_ids=None) -> list:
         """Get jobs from the API.

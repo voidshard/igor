@@ -24,7 +24,7 @@ services:
       - DATABASE_URL=postgres://igorreadwrite:readwrite@postgres:5432/igor?sslmode=disable&search_path=igor
       - REDIS_URL=redis:6379
       - ADDR=0.0.0.0:8100
-        #      - DEBUG=true
+      - DEBUG=true
     depends_on:
       - postgres
       - redis

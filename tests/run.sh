@@ -14,6 +14,8 @@ REDISHOST=${REDISHOST:-localhost}
 REDISPORT=${REDISPORT:-6379}
 REDISDB=${REDISDB:-0}
 
+APIPORT=${APIPORT:-8100}
+
 set -eux
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
@@ -22,6 +24,7 @@ cd $SCRIPT_DIR
 MIGRATE=$SCRIPT_DIR/../cmd/db_migrate/run.sh
 
 # stand up the test infra
+docker compose build
 docker compose up -d
 
 # wait for the postgres server to be ready
@@ -36,7 +39,7 @@ PGHOST=$PGHOST PGPORT=$PGPORT PGUSER=$PGUSER PGDATABASE=$PGDATABASE PGPASSWORD=$
 
 # run the tests
 set +e 
-IGOR_TEST_PG_URL="postgres://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=disable&search_path=igor" IGOR_TEST_RD_URL="redis://${REDISHOST}:${REDISPORT}/${REDISDB}" go test -v ./...
+IGOR_TEST_API="http://localhost:${APIPORT}/api/v1" IGOR_TEST_DATA=${SCRIPT_DIR}/data IGOR_TEST_PG_URL="postgres://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=disable&search_path=igor" IGOR_TEST_RD_URL="redis://${REDISHOST}:${REDISPORT}/${REDISDB}" go test -v ./...
 
 # tear down & remove the test infra
 docker compose stop

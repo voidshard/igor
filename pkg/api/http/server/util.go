@@ -1,10 +1,10 @@
-package http
+package server
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	hp "net/http"
+	"net/http"
 	"strconv"
 
 	"github.com/voidshard/igor/internal/utils"
@@ -14,7 +14,7 @@ import (
 
 var (
 	errmap map[int][]error = map[int][]error{
-		hp.StatusBadRequest: []error{
+		http.StatusBadRequest: []error{
 			ie.ErrNoLayers,
 			ie.ErrNoTasks,
 			ie.ErrNoTaskType,
@@ -32,7 +32,7 @@ var (
 // http.StatusInternalServerError if the error is not recognised.
 func mapError(err error) int {
 	if err == nil {
-		return hp.StatusOK
+		return http.StatusOK
 	}
 	for code, errs := range errmap {
 		for _, e := range errs {
@@ -41,16 +41,16 @@ func mapError(err error) int {
 			}
 		}
 	}
-	return hp.StatusInternalServerError
+	return http.StatusInternalServerError
 }
 
-func unmarshalQuery(w hp.ResponseWriter, r *hp.Request, out *structs.Query) error {
+func unmarshalQuery(w http.ResponseWriter, r *http.Request, out *structs.Query) error {
 	q := r.URL.Query()
 
 	if q.Has("limit") {
 		limit, err := strconv.Atoi(q.Get("limit"))
 		if err != nil {
-			hp.Error(w, err.Error(), hp.StatusBadRequest)
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return fmt.Errorf("bad limit: %v", err)
 		}
 		out.Limit = limit
@@ -59,7 +59,7 @@ func unmarshalQuery(w hp.ResponseWriter, r *hp.Request, out *structs.Query) erro
 	if q.Has("offset") {
 		offset, err := strconv.Atoi(q.Get("offset"))
 		if err != nil {
-			hp.Error(w, err.Error(), hp.StatusBadRequest)
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return fmt.Errorf("bad offset: %v", err)
 		}
 		out.Offset = offset
@@ -69,7 +69,7 @@ func unmarshalQuery(w hp.ResponseWriter, r *hp.Request, out *structs.Query) erro
 		out.JobIDs = q["job_ids"]
 		for _, id := range out.JobIDs {
 			if !utils.IsValidID(id) {
-				hp.Error(w, "bad job id", hp.StatusBadRequest)
+				http.Error(w, "bad job id", http.StatusBadRequest)
 				return fmt.Errorf("bad job id: %v", id)
 			}
 		}
@@ -78,7 +78,7 @@ func unmarshalQuery(w hp.ResponseWriter, r *hp.Request, out *structs.Query) erro
 		out.LayerIDs = q["layer_ids"]
 		for _, id := range out.LayerIDs {
 			if !utils.IsValidID(id) {
-				hp.Error(w, "bad layer id", hp.StatusBadRequest)
+				http.Error(w, "bad layer id", http.StatusBadRequest)
 				return fmt.Errorf("bad layer id: %v", id)
 			}
 		}
@@ -87,7 +87,7 @@ func unmarshalQuery(w hp.ResponseWriter, r *hp.Request, out *structs.Query) erro
 		out.TaskIDs = q["task_ids"]
 		for _, id := range out.TaskIDs {
 			if !utils.IsValidID(id) {
-				hp.Error(w, "bad task id", hp.StatusBadRequest)
+				http.Error(w, "bad task id", http.StatusBadRequest)
 				return fmt.Errorf("bad task id: %v", id)
 			}
 		}
@@ -97,7 +97,7 @@ func unmarshalQuery(w hp.ResponseWriter, r *hp.Request, out *structs.Query) erro
 		for _, s := range q["statuses"] {
 			st := structs.ToStatus(s)
 			if st == "" {
-				hp.Error(w, "bad status", hp.StatusBadRequest)
+				http.Error(w, "bad status", http.StatusBadRequest)
 				return fmt.Errorf("bad status: %v", s)
 			}
 			out.Statuses = append(out.Statuses, st)
@@ -110,9 +110,9 @@ func unmarshalQuery(w hp.ResponseWriter, r *hp.Request, out *structs.Query) erro
 
 // unmarshalJson reads the body of a request and attempts to unmarshal it into the given object.
 // This function write an error to the writer if an error occurs, and returns the error.
-func unmarshalJson(w hp.ResponseWriter, r *hp.Request, obj interface{}) error {
+func unmarshalJson(w http.ResponseWriter, r *http.Request, obj interface{}) error {
 	if r.Body == nil {
-		hp.Error(w, "No body", hp.StatusBadRequest)
+		http.Error(w, "No body", http.StatusBadRequest)
 		return fmt.Errorf("no body")
 	}
 	d := json.NewDecoder(r.Body)
@@ -121,7 +121,7 @@ func unmarshalJson(w hp.ResponseWriter, r *hp.Request, obj interface{}) error {
 	err := d.Decode(obj)
 	if err != nil {
 		// bad JSON or unrecognized json field
-		hp.Error(w, err.Error(), hp.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return fmt.Errorf("bad json: %v", err)
 	}
 

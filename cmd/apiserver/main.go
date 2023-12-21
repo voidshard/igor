@@ -6,7 +6,7 @@ import (
 	"github.com/jessevdk/go-flags"
 
 	"github.com/voidshard/igor/pkg/api"
-	"github.com/voidshard/igor/pkg/api/http"
+	"github.com/voidshard/igor/pkg/api/http/server"
 	"github.com/voidshard/igor/pkg/database"
 	"github.com/voidshard/igor/pkg/queue"
 )
@@ -72,6 +72,6 @@ func main() {
 		panic(err)
 	}
 
-	s := http.NewServer(CLI.Addr, CLI.StaticDir, CLI.Debug)
+	s := server.NewServer(CLI.Addr, CLI.StaticDir, CLI.Debug)
 	s.ServeForever(api)
 }

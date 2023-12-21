@@ -1,11 +1,10 @@
-// http API module serves Igor's API over HTTP.
-package http
+package server
 
 import (
 	"context"
 	"encoding/json"
 	"log"
-	hp "net/http"
+	"net/http"
 	"os"
 	"os/signal"
 	"time"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/voidshard/igor/internal/utils"
 	"github.com/voidshard/igor/pkg/api"
+	"github.com/voidshard/igor/pkg/api/http/common"
 	"github.com/voidshard/igor/pkg/structs"
 )
 
@@ -27,32 +27,26 @@ type Server struct {
 	debug      bool
 	svc        api.API
 	exit       chan os.Signal
-	httpserver *hp.Server
+	httpserver *http.Server
 }
 
 func (s *Server) ServeForever(svc api.API) error {
 	s.svc = svc
 
 	router := mux.NewRouter()
-
-	router.HandleFunc("/healthz", s.Health).Methods(hp.MethodGet)
-	router.HandleFunc("/api/v1/jobs", s.Jobs).Methods(hp.MethodGet, hp.MethodPost)
-
-	router.HandleFunc("/api/v1/layers", s.Layers).Methods(hp.MethodGet)
-	router.HandleFunc("/api/v1/layers/pause", s.ToggleOp(structs.KindLayer, s.svc.Pause)).Methods(hp.MethodPatch)
-	router.HandleFunc("/api/v1/layers/unpause", s.ToggleOp(structs.KindLayer, s.svc.Unpause)).Methods(hp.MethodPatch)
-	router.HandleFunc("/api/v1/layers/skip", s.ToggleOp(structs.KindLayer, s.svc.Skip)).Methods(hp.MethodPatch)
-
-	router.HandleFunc("/api/v1/tasks", s.Tasks).Methods(hp.MethodGet, hp.MethodPost)
-	router.HandleFunc("/api/v1/tasks/pause", s.ToggleOp(structs.KindTask, s.svc.Pause)).Methods(hp.MethodPatch)
-	router.HandleFunc("/api/v1/tasks/unpause", s.ToggleOp(structs.KindTask, s.svc.Unpause)).Methods(hp.MethodPatch)
-	router.HandleFunc("/api/v1/tasks/skip", s.ToggleOp(structs.KindTask, s.svc.Skip)).Methods(hp.MethodPatch)
-	router.HandleFunc("/api/v1/tasks/kill", s.ToggleOp(structs.KindTask, s.svc.Kill)).Methods(hp.MethodPatch)
-	router.HandleFunc("/api/v1/tasks/retry", s.ToggleOp(structs.KindTask, s.svc.Retry)).Methods(hp.MethodPatch)
+	router.HandleFunc("/healthz", s.Health).Methods(http.MethodGet)
+	router.HandleFunc(common.API_JOBS, s.Jobs).Methods(http.MethodGet, http.MethodPost)
+	router.HandleFunc(common.API_LAYERS, s.Layers).Methods(http.MethodGet)
+	router.HandleFunc(common.API_TASKS, s.Tasks).Methods(http.MethodGet, http.MethodPost)
+	router.HandleFunc(common.API_PAUSE, s.ToggleOp(s.svc.Retry)).Methods(http.MethodPatch)
+	router.HandleFunc(common.API_UNPAUSE, s.ToggleOp(s.svc.Unpause)).Methods(http.MethodPatch)
+	router.HandleFunc(common.API_SKIP, s.ToggleOp(s.svc.Skip)).Methods(http.MethodPatch)
+	router.HandleFunc(common.API_KILL, s.ToggleOp(s.svc.Kill)).Methods(http.MethodPatch)
+	router.HandleFunc(common.API_RETRY, s.ToggleOp(s.svc.Retry)).Methods(http.MethodPatch)
 
 	if s.static != "" {
 		log.Println("Serving static files from", s.static)
-		router.PathPrefix("/").Handler(hp.FileServer(hp.Dir(s.static)))
+		router.PathPrefix("/").Handler(http.FileServer(http.Dir(s.static)))
 	}
 
 	if s.debug {
@@ -60,7 +54,7 @@ func (s *Server) ServeForever(svc api.API) error {
 		router.Use(loggingMiddleware)
 	}
 
-	s.httpserver = &hp.Server{
+	s.httpserver = &http.Server{
 		Handler:      router,
 		Addr:         s.addr,
 		WriteTimeout: 15 * time.Second,
@@ -85,18 +79,18 @@ func (s *Server) ServeForever(svc api.API) error {
 	return nil
 }
 
-func (s *Server) Jobs(w hp.ResponseWriter, r *hp.Request) {
+func (s *Server) Jobs(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case hp.MethodGet:
+	case http.MethodGet:
 		s.getJobs(w, r)
-	case hp.MethodPost:
+	case http.MethodPost:
 		s.createJob(w, r)
 	default:
-		hp.Error(w, "Method not allowed", hp.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *Server) createJob(w hp.ResponseWriter, r *hp.Request) {
+func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	cjr := &structs.CreateJobRequest{}
 	err := unmarshalJson(w, r, cjr)
 	if err != nil {
@@ -105,17 +99,17 @@ func (s *Server) createJob(w hp.ResponseWriter, r *hp.Request) {
 
 	resp, err := s.svc.CreateJob(cjr)
 	if err != nil {
-		hp.Error(w, err.Error(), mapError(err))
+		http.Error(w, err.Error(), mapError(err))
 		return
 	}
 
 	err = json.NewEncoder(w).Encode(resp)
 	if err != nil {
-		hp.Error(w, err.Error(), hp.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *Server) getJobs(w hp.ResponseWriter, r *hp.Request) {
+func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 	q := &structs.Query{}
 	err := unmarshalQuery(w, r, q)
 	if err != nil {
@@ -124,7 +118,7 @@ func (s *Server) getJobs(w hp.ResponseWriter, r *hp.Request) {
 
 	items, err := s.svc.Jobs(q)
 	if err != nil {
-		hp.Error(w, err.Error(), mapError(err))
+		http.Error(w, err.Error(), mapError(err))
 		return
 	}
 	if s.debug {
@@ -133,11 +127,11 @@ func (s *Server) getJobs(w hp.ResponseWriter, r *hp.Request) {
 
 	err = json.NewEncoder(w).Encode(items)
 	if err != nil {
-		hp.Error(w, err.Error(), hp.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *Server) Layers(w hp.ResponseWriter, r *hp.Request) {
+func (s *Server) Layers(w http.ResponseWriter, r *http.Request) {
 	// only GET is allowed, so we know what this request is
 	q := &structs.Query{}
 	err := unmarshalQuery(w, r, q)
@@ -147,7 +141,7 @@ func (s *Server) Layers(w hp.ResponseWriter, r *hp.Request) {
 
 	items, err := s.svc.Layers(q)
 	if err != nil {
-		hp.Error(w, err.Error(), mapError(err))
+		http.Error(w, err.Error(), mapError(err))
 		return
 	}
 	if s.debug {
@@ -156,22 +150,22 @@ func (s *Server) Layers(w hp.ResponseWriter, r *hp.Request) {
 
 	err = json.NewEncoder(w).Encode(items)
 	if err != nil {
-		hp.Error(w, err.Error(), hp.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *Server) Tasks(w hp.ResponseWriter, r *hp.Request) {
+func (s *Server) Tasks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case hp.MethodGet:
+	case http.MethodGet:
 		s.getTasks(w, r)
-	case hp.MethodPost:
+	case http.MethodPost:
 		s.createTasks(w, r)
 	default:
-		hp.Error(w, "Method not allowed", hp.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *Server) createTasks(w hp.ResponseWriter, r *hp.Request) {
+func (s *Server) createTasks(w http.ResponseWriter, r *http.Request) {
 	ctr := []*structs.CreateTaskRequest{}
 	err := unmarshalJson(w, r, &ctr)
 	if err != nil {
@@ -182,24 +176,24 @@ func (s *Server) createTasks(w hp.ResponseWriter, r *hp.Request) {
 		// we accept blank or existing layer IDs.
 		// Blank IDs tells us to create a new job / layer automatically.
 		if lr.LayerID != "" && !utils.IsValidID(lr.LayerID) {
-			hp.Error(w, "bad layer id", hp.StatusBadRequest)
+			http.Error(w, "bad layer id", http.StatusBadRequest)
 			return
 		}
 	}
 
 	resp, err := s.svc.CreateTasks(ctr)
 	if err != nil {
-		hp.Error(w, err.Error(), mapError(err))
+		http.Error(w, err.Error(), mapError(err))
 		return
 	}
 
 	err = json.NewEncoder(w).Encode(resp)
 	if err != nil {
-		hp.Error(w, err.Error(), hp.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *Server) getTasks(w hp.ResponseWriter, r *hp.Request) {
+func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 	q := &structs.Query{}
 	err := unmarshalQuery(w, r, q)
 	if err != nil {
@@ -208,7 +202,7 @@ func (s *Server) getTasks(w hp.ResponseWriter, r *hp.Request) {
 
 	items, err := s.svc.Tasks(q)
 	if err != nil {
-		hp.Error(w, err.Error(), mapError(err))
+		http.Error(w, err.Error(), mapError(err))
 		return
 	}
 	if s.debug {
@@ -217,31 +211,27 @@ func (s *Server) getTasks(w hp.ResponseWriter, r *hp.Request) {
 
 	err = json.NewEncoder(w).Encode(items)
 	if err != nil {
-		hp.Error(w, err.Error(), hp.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *Server) ToggleOp(k structs.Kind, fn func([]*structs.ObjectRef) (int64, error)) func(hp.ResponseWriter, *hp.Request) {
-	return func(w hp.ResponseWriter, r *hp.Request) {
+func (s *Server) ToggleOp(fn func([]*structs.ObjectRef) (int64, error)) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		tog := []*structs.ObjectRef{}
 		err := unmarshalJson(w, r, &tog)
 		if err != nil {
 			return
 		}
 
-		for _, t := range tog { // implied by URL
-			t.Kind = k
-		}
-
 		updated, err := fn(tog)
 		if err != nil {
-			hp.Error(w, err.Error(), mapError(err))
+			http.Error(w, err.Error(), mapError(err))
 			return
 		}
 
-		err = json.NewEncoder(w).Encode(&UpdateResponse{Updated: updated})
+		err = json.NewEncoder(w).Encode(&common.UpdateResponse{Updated: updated})
 		if err != nil {
-			hp.Error(w, err.Error(), hp.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
 }
@@ -251,7 +241,7 @@ func (s *Server) Close() error {
 	return nil
 }
 
-func (s *Server) Health(w hp.ResponseWriter, r *hp.Request) {
+func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 

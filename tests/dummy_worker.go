@@ -12,9 +12,8 @@ import (
 )
 
 const (
-	taskSleep      = "sleep"
-	taskError      = "die"
-	taskErrorMaybe = "maybe_die"
+	taskSleep = "sleep"
+	taskError = "die"
 )
 
 func main() {
@@ -46,17 +45,6 @@ func main() {
 		for _, w := range work {
 			fmt.Printf("Erroring %s\n", w.Task.ID)
 			w.SetError(myErr)
-		}
-		return nil
-	})
-	svc.Register(taskErrorMaybe, func(work []*queue.Meta) error {
-		for _, w := range work {
-			if rand.Intn(10) < 2 {
-				fmt.Printf("Erroring %s\n", w.Task.ID)
-				w.SetError(myErr)
-			} else {
-				fmt.Printf("Success %s\n", w.Task.ID)
-			}
 		}
 		return nil
 	})
