@@ -12,10 +12,16 @@
                 {
                     "type": "sleep",
                     "name": "test-task-01-02"
-                },
+                }
+            ]
+       },
+       {
+            "name": "test-layer-02",
+            "priority": 0,
+            "tasks": [
                 {
-                    "type": "sleep",
-                    "name": "test-task-01-03"
+                    "type": "die",
+                    "name": "test-task-02-01"
                 }
             ]
        }

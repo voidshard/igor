@@ -30,7 +30,40 @@ func genericPost(addr *url.URL, in interface{}, out interface{}) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("BODY", string(body))
+
+	if resp.StatusCode >= 400 { // some error code, assume message is error message
+		return fmt.Errorf("bad status code %d, returned %s", resp.StatusCode, string(body))
+	}
+
+	return json.Unmarshal(body, out)
+}
+
+func genericPatch(addr *url.URL, in interface{}, out interface{}) error {
+	data, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+
+	// it's kind of odd the HTTP package doesn't have a Patch method where it has Get & Post
+	req, err := http.NewRequest(http.MethodPatch, addr.String(), bytes.NewBuffer(data))
+	req.Header.Set("Content-Type", "application/json")
+	if err != nil {
+		return err
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	} else if resp.Body == nil {
+		return fmt.Errorf("no response body with status code %d", resp.StatusCode)
+	}
+
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
 
 	if resp.StatusCode >= 400 { // some error code, assume message is error message
 		return fmt.Errorf("bad status code %d, returned %s", resp.StatusCode, string(body))
@@ -59,7 +92,6 @@ func genericGet(addr *url.URL, out interface{}) error {
 	if resp.StatusCode >= 400 { // some error code, assume message is error message
 		return fmt.Errorf("bad status code %d, returned %s", resp.StatusCode, string(body))
 	}
-	fmt.Println("BODY", string(body))
 
 	return json.Unmarshal(body, out)
 }

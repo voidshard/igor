@@ -19,31 +19,31 @@ func New(address string) (*Client, error) {
 func (c *Client) Retry(in []*structs.ObjectRef) (int64, error) {
 	addr := c.addr(common.API_RETRY)
 	var out common.UpdateResponse
-	return out.Updated, genericPost(addr, in, &out)
+	return out.Updated, genericPatch(addr, in, &out)
 }
 
 func (c *Client) Kill(in []*structs.ObjectRef) (int64, error) {
 	addr := c.addr(common.API_KILL)
 	var out common.UpdateResponse
-	return out.Updated, genericPost(addr, in, &out)
+	return out.Updated, genericPatch(addr, in, &out)
 }
 
 func (c *Client) Skip(in []*structs.ObjectRef) (int64, error) {
 	addr := c.addr(common.API_SKIP)
 	var out common.UpdateResponse
-	return out.Updated, genericPost(addr, in, &out)
+	return out.Updated, genericPatch(addr, in, &out)
 }
 
 func (c *Client) Pause(in []*structs.ObjectRef) (int64, error) {
 	addr := c.addr(common.API_PAUSE)
 	var out common.UpdateResponse
-	return out.Updated, genericPost(addr, in, &out)
+	return out.Updated, genericPatch(addr, in, &out)
 }
 
 func (c *Client) Unpause(in []*structs.ObjectRef) (int64, error) {
 	addr := c.addr(common.API_UNPAUSE)
 	var out common.UpdateResponse
-	return out.Updated, genericPost(addr, in, &out)
+	return out.Updated, genericPatch(addr, in, &out)
 }
 
 func (c *Client) Jobs(q *structs.Query) ([]*structs.Job, error) {
