@@ -30,9 +30,9 @@ RO_PASS=${PGUSER_READONLY_PASS:-readonly} \
 envsubst <00.tmpl >00.sql
 
 # Template user passwords
-TABLE_JOBS=${TABLE_JOBS:-Job} \
-TABLE_LAYERS=${TABLE_LAYERS:-Layer} \
-TABLE_TASKS=${TABLE_TASKS:-Task} \
+TABLE_JOBS=Job \
+TABLE_LAYERS=Layer \
+TABLE_TASKS=Task \
 envsubst <01.tmpl >01.sql
 
 # Run

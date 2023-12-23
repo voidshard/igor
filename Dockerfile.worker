@@ -14,7 +14,7 @@ COPY pkg pkg
 COPY internal internal
 RUN go mod download
 
-RUN CGO_ENABLED=0 GOOS=linux go build -o /app ./cmd/igor/main.go && chown -R $USER_UID:$USER_GID /app
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app ./cmd/worker/main.go && chown -R $USER_UID:$USER_GID /app
 
 USER $USERNAME
 CMD ["/app"]

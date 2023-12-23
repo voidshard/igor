@@ -36,7 +36,8 @@ func main() {
 	// Since this is configured with OptionsClientDefault it does not run any background routines
 	// that Igor needs to function (ie, to process events, queue tasks etc).
 	//
-	// This is intended purely to serve Igor's service API to clients over the network.
+	// This is intended purely to serve Igor's service API to clients over the network. Though you could
+	// have one server type do both if you wanted.
 	//
 	// If you wished to interact with Igor via. importing the pkg libraries, then you don't need to run this.
 	//

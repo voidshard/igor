@@ -32,6 +32,7 @@ func main() {
 	// to process igor events, queue tasks, push status updates or whatever else.
 	//
 	// This is intended to be run internal background processes, not to serve Igor's API to clients.
+	// Though you could have one server type do both if you wanted.
 
 	var parser = flags.NewParser(&CLI, flags.Default)
 	if _, err := parser.Parse(); err != nil {

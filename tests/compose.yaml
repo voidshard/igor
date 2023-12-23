@@ -35,7 +35,7 @@ services:
     # performs the inner logic of Igor, running background tasks, queuing tasks and generally managing things
     build:
       context: ../
-      dockerfile: Dockerfile.igor
+      dockerfile: Dockerfile.worker
     environment:
       - DATABASE_URL=postgres://igorreadwrite:readwrite@postgres:5432/igor?sslmode=disable&search_path=igor
       - REDIS_URL=redis:6379
