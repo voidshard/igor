@@ -3,354 +3,281 @@
 Open source distributed workflow system. 
 
 * [Before You Start](#before-you-start)
-* [Building and Requirements](#building-and-requirements)
+* [Usage](#usage)
 * [Concepts](#concepts)
-* [Examples](#examples)
-* [UI](#ui)
+* [API](#API)
+* [Building and Requirements](#building-and-requirements)
+
 
 ## Before You Start
 
 ##### What
 
-Igor is a simple workflow running system, similar to Celery or TaskTiger in that it 
-allows one to spin up some number of workers and farm tasks out to them to perform.
+Igor is a task queuing system, similar to [Asynq](https://github.com/hibiken/asynq) or [Tasqueue](https://github.com/kalbhor/Tasqueue) but building on top of these a straight forward workflow system & API for batch processing.
+
 
 ##### Why
 
-I know I know. We already have task launching systems in python. 
-Hell I just mentioned two of them. Why do we need another? 
-Quite simply, the design goals of Igor are quite different to the aforementioned systems. Very, very different. 
+I know I know. We already have task queues, hell I just mentioned two of them. Why do we need another? Quite simply, the design goals of Igor are quite different to the aforementioned systems. In fact Igor is built on top of [existing task queues](/pkg/queue/asynq.go).
 
-In short Igor is *all* about workflows, visibility, live workflow modification and easy integration 
-... and not singular rapid fire and / or realtime tasks. 
-
-If you're after realtime task execution and / or don't need workflows at all: Igor isn't for you. 
+If you're after realtime task execution and / or don't need workflows for some embarrassingly parallel problem: Igor isn't for you. If however you require more order, easily inspectable workflows that might need to stop & start or dynamically expand: read on!
 
 
-## Building and Requirements
+## Usage
 
-The project is python3.
+As in [other](https://github.com/hibiken/asynq) [systems](https://github.com/kalbhor/Tasqueue) you register some process to perform work on your desired tasks like so
+```golang
+import (
+	"github.com/voidshard/igor/pkg/api"
+	"github.com/voidshard/igor/pkg/database"
+	"github.com/voidshard/igor/pkg/queue"
+)
 
-At the moment the core dependencies are:
-```bash
-pip install psycopg2 redis psutil Flask pyopenssl gevent
-``` 
+func main() {
+	service, _ := api.New(&database.Options{URL: x}, &queue.Options{URL: y}, api.OptionsClientDefault())
+    
+    service.Register("mytask", func(work []*queue.Meta) error {
+        // do something
+    })
 
-Just once, you'll need to setup the database before kicking off Igor. A simple schema to get you started is included. You'll want to run something like
-```bash
-psql -p <port> -h <host> -U <user> -f ./ddl/postgres/schema_template.sql igor 
+    service.Run()
+}
 ```
+Note that in Igor you register a handler to accept multiple tasks at a time, this is to allow the queue to perform task batching / aggregation if the queue supports it & is configured to do so.
+
+The work [meta object](/pkg/queue/meta.go) passed in contains the [task object](/pkg/structs/task.go) and allows the user to set the tasks' status & an optional message. If your task handler doesn't explicitly set a status, the task will be set to completed by default.
 
 
-If you're planning on running the test suite you'll need docker & pytest too. Docker & docker compose files are included.
-```bash
-pip install docker pytest
+No surprises so far, now let's kick off some tasks
+```golang
+import (
+	"github.com/voidshard/igor/pkg/api"
+	"github.com/voidshard/igor/pkg/database"
+	"github.com/voidshard/igor/pkg/queue"
+	"github.com/voidshard/igor/pkg/structs"
+)
+
+func main() {
+	service, _ := api.New(&database.Options{URL: x}, &queue.Options{URL: y}, api.OptionsClientDefault())
+
+    // kick off a job
+    service.CreateJob(&structs.CreateJobRequest{
+        JobSpec: structs.JobSpec{Name: "my-job"},
+        Layers: []structs.JobLayerRequest{
+            {
+                LayerSpec: structs.LayerSpec{Name: "layer-01", Priority: 0},
+                Tasks: []structs.TaskSpec{
+                    {Type: "mytask", Name: "task-01", Args: []byte("hello world")},
+                    // more tasks
+                },
+            },
+            // more layers
+        },
+    })
+
+    // or add task(s) to existing layer(s)
+    service.CreateTasks([]*structs.CreateTaskRequest{
+        {LayerID: existing_layer_id, TaskSpec: structs.TaskSpec{Type: "mytask", ..}},
+        // more tasks
+    })
+}
 ```
+Note we don't explicitly 'enqueue' here, Igor takes care of calling the queue & pushing tasks to it as needed. We could also talk to an API server rather than using Igor's libs directly.
 
+Examples can be found in the test suite including infra with [docker compose](/tests/compose.yaml), a [dummy worker](/tests/dummy_worker.go) and some [example calls](/tests/end_to_end_test.go) over HTTP.
 
-The PyQt5 UI which requires, in addition 
-```bash
-pip install pyqt5 requests
-```
 
 ## Concepts
 
 ###### Terminology
 
-Some terminology to get us started!
+With a basic example out of the way, let's dive a bit more into terms & concepts.
 
-First class lives-in-the-database honest-to-goodness objects:
-
-* Job
+* [Job](/pkg/structs/job.go)
     
     What might be called a 'workflow'. Essentially a collection of *Layers*
 
-* Layer
+* [Layer](/pkg/structs/layer.go)
     
-    A Layer is a collection of tasks that belong to a Job.
-    Layers have an 'order' value and are formed into a tree when a Job is 
-    created. That is, layers with the same 'order' run at the same time, and higher ordered
-    layers run only after previous layers have completed or are explicitly skipped (by a human).
+    A Layer is a collection of tasks that belong to a Job. Layers have an 'priority' value, those with the same priority run at the same time, higher layers run only after previous layers have completed or are explicitly skipped (by a human). Tasks within a layer run in parallel.
 
-* Task
+* [Task](/pkg/structs/task.go)
     
-    A task is a single OS command to be run, and belongs to a layer. It includes
-    - custom environment data to set before running (the igor Job, Layer and Task IDs are automatically
-      included in the task environment before launch)
-    - space for a task result that can be set by the user
-    - records about retries / attempts / statistics etc
-
-* Worker
-
-    A daemon process that is spun up on some host to run task(s). Daemons in Igor spin up tasks
-    by running them as full blown OS commands. This means you never need to restart daemons
-    to register more tasks on them or when you alter code that the tasks run. Worker daemons 
-    regularly ping home so the system knows they're alive. Igor automatically recovers tasks 
-    from daemons that become unresponsive.
-
-* User
-
-    In addition to this Igor has it's own concept of a user. Each Job, Layer and Task has a user
-    id associated with it. Users that aren't admins can only see and modify their own objects, 
-    and can't see workers. Admins can see & modify anything.
-
-
-There are other objects that are used to talk to the API, for searching and what not:
-
-* Query
-
-    A query is a simple list of filters with some global settings (limit, offset, user etc).
-    These are sent to Igor in order to ..well.. perform searches. No surprises there.
-
-* Filter
-    
-    A filter is an instruction as to what to match. A query will return any result(s) that 
-    match any of the given filters.
-
-Ok now that you have the basic objects in mind, onward with Igor concepts! 
+    A task is a single unit of work, and belongs to a layer.
 
 
 ###### Workflows as first class objects
 
-You cannot define tasks outside of a job. Period.
+Tasks cannot exist outside of a job. The API supports creating a job with layers & tasks up front, and adding tasks to existing layers (before the layer begins processing).
 
-Other systems allow you to define tasks with support for chains, groups and sets of tasks 
-as an afterthought. Igor is built entirely the other way around. And when I say *entirely* I 
-mean it: you can define layers *without* tasks if you so wish. 
+Other systems allow you to define tasks with support for chains & groups as an afterthought. Igor is built entirely the other way around. And when I say *entirely* I mean it: you can define layers *without* tasks if you so wish. You can also create layers & tasks paused if you wished to, say, add some unknown or unbounded number of tasks before beginning processing.
 
-Why might you want to do this? We'll get to that later...
 
 ###### Visibility, tracking all the things
 
-To explain by a counter example: In systems where workflows are secondary concerns it may not be possible to fetch the status of tasks not yet launched. That is, often these systems are implemented so that task A fires off task B when it completes in a sort of daisy-chain approach. Such a system has no way of knowing about task B (other than that, perhaps, task A has a post-run instruction) before it completes task A. From this point, task B is created and can be looked up. 
+To explain by a counter example: In systems where workflows are secondary concerns it may not be possible to fetch the status of tasks not yet launched. That is, often these systems are implemented so that task A fires off task B when it completes in a sort of daisy-chain approach. Such a system has no way of knowing about task B (other than perhaps task A has a post-run instruction) before it completes task A. From this point, task B is created and can be looked up.
 
 In Igor the status of the entire workflow is known from the begining - whether it has run, will run or is currently running (or even rerunning).
 
-In addition task history is recorded for debugging / auditing. This example task was queued by the system (selected to run), then skipped, retried and re-queued before being picked up by a worker & completing successfully. This isn't meant to take the place of logs, just to track what Igor has done with the task.
-```json
-[
-  {
-    "task_record_id": "6b4f4f42a4f54e50b232dc958ea1bf9a",
-    "job_id": "2355b52a-be0c-42c8-ace1-31116c6ed5be",
-    "layer_id": "ad198abe-7084-4b8a-be6a-ef85909d3fdf",
-    "task_id": "65f15314-b692-4e93-9daa-989c9f77cb75",
-    "worker_id": null,
-    "reason": "system scheduled task",
-    "state": "QUEUED",
-    "created": 1557064729
-  },
-  {
-    "task_record_id": "9c6fb6ae1a0f42688033a0cceeb76d7e5",
-    "job_id": "2355b52a-be0c-42c8-ace1-31116c6ed5be",
-    "layer_id": "ad198abe-7084-4b8a-be6a-ef85909d3fdf",
-    "task_id": "65f15314-b692-4e93-9daa-989c9f77cb75",
-    "worker_id": null,
-    "reason": "skipped by user:580fc8fe-5d36-4bdd-b461-0abc05b7b48c",
-    "state": "SKIPPED",
-    "created": 1557066676
-  },
-  {
-    "task_record_id": "8273dae74b1a4e94a7a7cef1aa3bd314",
-    "job_id": "2355b52a-be0c-42c8-ace1-31116c6ed5be",
-    "layer_id": "ad198abe-7084-4b8a-be6a-ef85909d3fdf",
-    "task_id": "65f15314-b692-4e93-9daa-989c9f77cb75",
-    "worker_id": null,
-    "reason": "retried by user:580fc8fe-5d36-4bdd-b461-0abc05b7b48c",
-    "state": "PENDING",
-    "created": 1557066679
-  },
-  {
-    "task_record_id": "c66099b698df4d45b05ce51289d6d302",
-    "job_id": "2355b52a-be0c-42c8-ace1-31116c6ed5be",
-    "layer_id": "ad198abe-7084-4b8a-be6a-ef85909d3fdf",
-    "task_id": "65f15314-b692-4e93-9daa-989c9f77cb75",
-    "worker_id": null,
-    "reason": "system scheduled task",
-    "state": "QUEUED",
-    "created": 1557066683
-  },
-  {
-    "task_record_id": "836a2fc07cf6416ba53ae92342066878",
-    "job_id": "2355b52a-be0c-42c8-ace1-31116c6ed5be",
-    "layer_id": "ad198abe-7084-4b8a-be6a-ef85909d3fdf",
-    "task_id": "65f15314-b692-4e93-9daa-989c9f77cb75",
-    "worker_id": "333f6c54-62e6-4c87-9c3a-35b25914b280",
-    "reason": "'172.18.0.5' is on the case",
-    "state": "RUNNING",
-    "created": 1557066683
-  },
-  {
-    "task_record_id": "e05c514aa95a452abc907e6a1769355f",
-    "job_id": "2355b52a-be0c-42c8-ace1-31116c6ed5be",
-    "layer_id": "ad198abe-7084-4b8a-be6a-ef85909d3fdf",
-    "task_id": "65f15314-b692-4e93-9daa-989c9f77cb75",
-    "worker_id": "333f6c54-62e6-4c87-9c3a-35b25914b280",
-    "reason": "exit_code: 0  message: ",
-    "state": "COMPLETED",
-    "created": 1557066693
-  }
-]
-```
+
+###### Architecture 
+
+Igor has a few working parts & interfaces are used everywhere so sections can be replaced or expanded on.
+
+* [Database](/pkg/database/interface.go)
+
+  Where Igor stores job, layer and task data. Postgres is set up to partition tables into sections by created_at.
+  Each partition in postgres is for a single day, this is to make long term maintainence reasonably painless.
+  Igor does not archive / drop old partitions, this is left up to you to decide on.
+
+* [Queue](/pkg/queue/interface.go)
+
+  What Igor uses to actually run tasks. Igor handles telling the queue *when* to run something and leaves the 
+  queue to work out *how* to run it. Igor also leaves other details like retrying & batching / aggregation to the queue too.
+  The queue currently used is [asynq](https://github.com/hibiken/asynq) which supports [aggregation!](https://github.com/hibiken/asynq/wiki/Task-aggregation) (as all task queues should *ahem*).
+
+* [API](/pkg/api/interface.go)
+
+  The functionality provided by Igor to external clients. For those wishing to keep things in native Go you'll probably want the [api service](/pkg/api/service.go) with provides the ability to Register() handlers with the underlying queue.
+
+* [HTTP](/pkg/api/http/)
+
+  Is the Igor API served over HTTP, the package includes both server and client. Other mechanisms might be added in future (ie. gRPC).
+
+* [API Server](/cmd/apiserver/main.go)
+
+  Binary for serving API requests.
+
+* [Worker](/cmd/worker/main.go)
+
+  Binary that performs the internal logic of Igor itself. API Server(s) and Worker(s) are divided so they can be scaled up / down in isolation from each other. For demo purposes / small installations you could roll these together if desired.
 
 
-###### Live modification
-
-* Layer expansion at runtime 
-
-    You can create tasks in any layer up until it begins running, even while the parent job 
-    is running. It's a snap to launch a two layer job, where the first layer adds tasks to 
-    the second. Don't know how many tasks you're going to need exactly? Not a problem.
-
-* Pause and Unpause
-
-    Pause and unpause any task, layer or job. This don't stop currently running tasks, but 
-    nothing paused will be picked up and processed.
-
-* Kill and retry
-
-    If pausing isn't your thing you can order Igor to kill (SIGABORT followed by SIGKILL
-    if the process doesn't respond within some grace time) whatever whenever you feel like it.
-    You can also retry - kill and then remark task(s) as pending (ie to-be-run).
-    If not told otherwise, Igor will retry any task 3 times before deciding that perhaps the 
-    task is hopeless. (Idempotency is still important people!).
-    You can of course, continue telling Igor to retry such a task until you're blue in the face.
-
-* Task results
-
-   Task results are stored alongside task objects in Igor. A simple API allows you to get or 
-   set the result of any task(s) you want. Igor doesn't try to automatically pass you results 
-   to or from tasks, that's left for you to do if you want/need to.
-
-* Task environment
-
-   The environment of every task is also stored alongside task objects in Igor. Again the API
-   allows you to modify this whenever you feel like it, not that this will affect
-   already running tasks. These are optional user set environment variables, in addition the 
-   default env vars Igor sets.
-
-
-###### Easy integration
-
-
-* Transport
-
-    The current transport system is simple JSON over HTTPS. Mostly because it's simple and
-    everything can use it with minimal effort. But there's no reason Igor can't support
-    more transport mechanisms and run them all simultaneously.
-
-* Any language
-    
-    If your task language of choice can read/write JSON and do HTTPS then it can talk to Igor.
-    Even without talking to Igor, if it can be launched with an OS command it's fair game.
-
-* Interfaces
-
-    The database, api transport, work scheduler and task runners are all behind interfaces.
-    You could run TaskTiger inside of Igor to manage the running the tasks with Nats.io to ship 
-    data back and fourth. Whatever. Write an implementation and make a PR.
-
-
-## UI
-
-Igor includes a PyQt5 UI that gives visibility into the system and running objects.
-It also gives the ability to pause/unpause kill/retry things in Igor.
-
-Obviously, you'll need PyQt5 installed to run it. Checkout the /bin folder.
-
-
-## Examples
+## API
 
 In short, you can create a Job by
-* POST /v1/jobs/
+* POST /api/v1/jobs/
 ```json
 {
     "name": "my_job",
     "layers": [
         {
-            "order": 0,
+            "priority": 0,
             "name": "first_layer",
             "tasks": [
                 {
-                    "name": "sleep",
-                    "cmd": ["sleep", "60"]
+                    "name": "task_0",
+                    "type" "sleep"
                 }
             ]
         },
         {
-            "order": 10,
+            "priority": 10,
             "name": "second_layer",
             "tasks": []
         }
     ]
 }
 ```
-You must define all layers that you want upfront. Igor doesn't mind it if it goes to run
-a layer and finds there are no tasks. It just considers it "complete" immediately :)
+You must define all layers that you want upfront. Igor doesn't mind it if it goes to run a layer and finds there are no tasks. It just considers it "complete" immediately :)
 
-You can add a task to an already existing layer with 
-- POST /v1/layers/[layer_id]/tasks
+You can add tasks to an already existing layer with 
+- POST /api/v1/layers
 ```json
-{"name": "a_new_task", "cmd": ["sleep", "10"]}
+[{
+    "layer_id": "id-of-layer-to-add-to",
+    "type": "sleep",
+    "name": "hello!"
+}]
 ```
-Once the layer is running - or just about to run - you can no longer do this.
+Once the layer is running you can no longer do this.
 
-For more info check out 
- - /tests/example_jobs for more examples
- - /lib/pyigor for a more complete simple http client 
- - /lib/igor/api/domain contains definitions for objects accepted over transport 
+You can kill, pause, unpause and retry tasks at the corresponding API endpoints via sending a PATCH like
+- PATCH /api/v1/pause
+```
+[{
+    "kind": "Task",
+    "id": "task-id",
+    "etag": "task-etag"
+}]
+```
+The response here contains the number of objects successfully marked paused (or whatever the operation is). It's worth checking this as Igor uses [optimistic locking](https://en.wikipedia.org/wiki/Optimistic_concurrency_control) for all updates and ignores operations on out-of-date etags.
+
+Check out the [HTTP server](/pkg/api/http/service/api.go), [client](/pkg/api/http/client/client.go) and [endpoints](/pkg/api/http/common/constants.go) for more details.
+
+
+## Building and Requirements
+
+The project is written in Go and uses Postgres as it's primary database.
+
+In addition Igor sits on top of a task queue; technically we can support [any queue](/pkg/queue/interface.go) but currently we use [Asynq](https://github.com/hibiken/asynq), so a Redis is required for that.
+
+Just once, you'll need to setup postgres. This makes a schema, tables, a read-only user, a read-write user & some triggers
+```bash
+./cmd/db_migrate/run.sh 
+```
+This script uses envsubst to sub in some values you might want to override (default passwords?).
+
+There is a PyQt5 UI which requires in addition 
+```bash
+pip install pyqt5 requests
+```
+that you can then launch with 
+```bash
+./ui/start.py
+```
+Fair warning this UI is ported from the previous version of Igor and it may be replaced with a web UI at some point.
 
 
 ## Glossary
 
 Terms you'll see thrown about.
 
-* Pending (state)
+* Pending ([status](/pkg/structs/status.go))
 
     The job/layer/task has been created, but has yet to run.
     
-* Queued (state)
+* Queued ([status](/pkg/structs/status.go))
 
-    Igor has scheduled the layer/task to run.
+    Igor has scheduled the task to run.
 
-* Running (state)
+* Running ([status](/pkg/structs/status.go))
     
     The job/layer/task is currently running.
     
-* Completed (state)
+* Completed ([status](/pkg/structs/status.go))
    
     The job/layer/task has completed.
     
-* Errored (state)
+* Errored ([status](/pkg/structs/status.go))
     
-    The job/layer/task is errored, or contains errors. Igor will reschedule tasks that have
-    not yet been retried more than their maximum number of attempts.
+    The job/layer/task is errored, or contains errors, Igor will not continue without human intervention.
 
-* Skipped (state)
+* Skipped ([status](/pkg/structs/status.go))
 
-    A user set state that Igor regards as "completed" (ie. Igor will not run it, and will kick 
-    off following task(s)).
+    An explicitly user set state that Igor regards as "completed" (ie. it does not block following tasks / layers).
 
-* Paused (flag)
+* Paused (action)
     
-    Tells Igor not to schedule the paused job/layer/task. This does *not* make Igor stop a running task. 
-    If you want to pause *and* stop something running, you're after 'pause' then 'kill' ... 
+    Tells Igor not to schedule the paused layer/task. This does *not* make Igor stop an already running task. 
+    If you want to pause *and* stop a task you'll need to follow this up with a kill.
+    Objects in Igor keep 'paused' as a 'paused_at' unix timestamp, with a value > 0 considered "paused"
 
 * Kill (action)
 
-    A killed job/layer/task is set to errored, currently running task(s) are stopped. Task(s) can be 
-    retried after being killed (but this counts against thier max attempts).
+    A killed task is set to errored, currently running task(s) are stopped if possible.
 
 * Retry (action)
 
-    A variant of kill, retry works on job/layer/task(s) that are *not* running and ignores a task(s) max attempts.
+    Kill & explicitly enqueue a task for reprocessing.
 
 
-## Status
+## TODO
 
-Igor is functional and reasonably tested. I'd like to add *more* tests before advising 
-folks to run it in anger, but it currently functions well enough for my own use at home.
-More tests & refinements to come as issues crop up. 
-
-Feel free to push up bugs / features.
+- Add SSL configuration options
+- Complete & expand on code comments
 
 
+## Notes
+
+- Feel free to push up bugs / features.

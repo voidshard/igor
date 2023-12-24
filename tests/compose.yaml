@@ -1,0 +1,67 @@
+services:
+  worker:
+    # supplies some tasks (sleep, die, maybe_die) for testing
+    build:
+      context: ../
+      dockerfile: tests/Dockerfile.dummyworker
+    environment:
+      - DATABASE_URL=postgres://igorreadwrite:readwrite@postgres:5432/igor?sslmode=disable&search_path=igor
+      - REDIS_URL=redis:6379
+    depends_on:
+      - postgres
+      - redis
+    deploy:
+      mode: replicated
+      replicas: 1
+  apiserver:
+    # serves Igor's API over HTTP (currently the only method, but more can be supported)
+    build:
+      context: ../
+      dockerfile: Dockerfile.apiserver
+    ports:
+      - "8100:8100"
+    environment:
+      - DATABASE_URL=postgres://igorreadwrite:readwrite@postgres:5432/igor?sslmode=disable&search_path=igor
+      - REDIS_URL=redis:6379
+      - ADDR=0.0.0.0:8100
+      - DEBUG=true
+    depends_on:
+      - postgres
+      - redis
+    deploy:
+      mode: replicated
+      replicas: 1
+  igor:
+    # performs the inner logic of Igor, running background tasks, queuing tasks and generally managing things
+    build:
+      context: ../
+      dockerfile: Dockerfile.worker
+    environment:
+      - DATABASE_URL=postgres://igorreadwrite:readwrite@postgres:5432/igor?sslmode=disable&search_path=igor
+      - REDIS_URL=redis:6379
+      - DEBUG=true
+    depends_on:
+      - postgres
+      - redis
+    deploy:
+      mode: replicated
+      replicas: 1
+  postgres:
+    image: "postgres:16"
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_PASSWORD=test
+  redis:
+    image: "redis:alpine"
+    ports:
+      - "6379:6379"
+  asynqmon:
+    # ui for Async
+    image: "hibiken/asynqmon"
+    ports:
+      - "8080:8080"
+    environment:
+      - REDIS_ADDR=redis:6379
+    depends_on:
+      - redis

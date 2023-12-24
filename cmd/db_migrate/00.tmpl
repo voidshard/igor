@@ -1,0 +1,21 @@
+-- Should be run as pg admin user (to set up schema & roles)
+
+--- Setup database, schema and roles
+CREATE DATABASE igor;
+
+CREATE USER igorreadwrite WITH PASSWORD '${RW_PASS}'; 
+GRANT CONNECT ON DATABASE igor TO igorreadwrite;
+GRANT ALL PRIVILEGES ON DATABASE igor TO igorreadwrite;
+
+CREATE USER igorreadonly WITH PASSWORD '${RO_PASS}';
+GRANT CONNECT ON DATABASE igor TO igorreadonly;
+
+\c igor
+CREATE SCHEMA IF NOT EXISTS igor;
+
+ALTER SCHEMA igor OWNER TO igorreadwrite;
+ALTER USER igorreadwrite SET search_path='igor';
+GRANT USAGE ON SCHEMA igor TO igorreadonly;
+ALTER USER igorreadonly SET search_path='igor';
+
+SET search_path TO igor;
