@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: "postgres:16"
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_PASSWORD=test
+#  opensearch:
+#    image: "opensearchproject/opensearch:latest"
+#    ports:
+#      - "9200:9200"
+#  dashboards:
+#    image: "opensearchproject/opensearch-dashboards:latest"
+#    ports:
+#      - "5601:8082"

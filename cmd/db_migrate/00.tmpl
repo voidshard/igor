@@ -1,0 +1,143 @@
+--- Setup database, schema and roles
+CREATE DATABASE igor;
+
+CREATE USER igorreadwrite WITH PASSWORD '${RW_PASS}'; 
+GRANT CONNECT ON DATABASE igor TO igorreadwrite;
+GRANT ALL PRIVILEGES ON DATABASE igor TO igorreadwrite;
+
+CREATE USER igorreadonly WITH PASSWORD '${RO_PASS}';
+GRANT CONNECT ON DATABASE igor TO igorreadonly;
+
+\c igor
+CREATE SCHEMA IF NOT EXISTS igor;
+
+GRANT USAGE ON SCHEMA igor TO igorreadwrite;
+ALTER USER igorreadwrite SET search_path='igor';
+
+GRANT USAGE ON SCHEMA igor TO igorreadonly;
+ALTER USER igorreadonly SET search_path='igor';
+
+GRANT SELECT ON ALL TABLES IN SCHEMA igor TO igorreadonly;
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA igor TO igorreadonly;
+GRANT ALL ON ALL TABLES IN SCHEMA igor TO igorreadwrite;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA igor TO igorreadwrite;
+
+SET search_path TO igor;
+
+-- notify_event function sends a JSON notification to channel 'igor_events' on insert, update, or delete.
+-- We only need this on Layer and Task tables - this is obviously expensive to do, but considered less
+-- expensive than polling the database for changes (and a great deal easier / less promlematic).
+CREATE OR REPLACE FUNCTION notify_event() RETURNS TRIGGER AS $$
+    DECLARE 
+        old_data json;
+	new_data json;
+        notification json;
+    BEGIN
+        -- Convert the old or new row to JSON, based on the kind of action.
+        -- Args as bytea is not a valid JSON type .. so we remove it
+        -- we actually don't need it for deciding what to do with the event anyway
+        IF (TG_OP = 'DELETE') THEN
+            old_data = row_to_json(OLD)::jsonb - 'args';
+	    new_data = NULL;
+	ELSIF (TG_OP = 'INSERT') THEN
+	    old_data = NULL;
+	    new_data = row_to_json(NEW)::jsonb - 'args';
+        ELSE
+	    old_data = row_to_json(OLD)::jsonb - 'args';
+            new_data = row_to_json(NEW)::jsonb - 'args';
+        END IF;
+        -- Contruct the notification as a JSON string.
+        notification = json_build_object('table',TG_TABLE_NAME, 'old', old_data, 'new', new_data);
+        -- Execute pg_notify(channel, notification)
+        PERFORM pg_notify('igor_events',notification::text);
+        -- Result is ignored since this is an AFTER trigger
+        RETURN NULL; 
+    END;
+$$ LANGUAGE plpgsql;
+
+-- create_partition_and_insert function creates a partition table if it doesn't exist and inserts the row.
+-- This is easier to deal with than installing partman or using cronjobs to create partitions, though, less
+-- performant.
+-- Partitioning makes is easy to remove old data from the DB (either DROP or some kind of archiving).
+CREATE OR REPLACE FUNCTION create_partition_and_insert() RETURNS trigger AS $$
+    DECLARE
+      partition_date TEXT;
+      partition TEXT;
+    BEGIN
+      partition_date = to_char(to_timestamp(NEW.created_at)::date, 'YYYY_MM_DD');
+      partition = TG_TABLE_NAME || '_' || partition_date;
+      IF NOT EXISTS(SELECT relname FROM pg_class WHERE relname=partition) THEN
+        EXECUTE 'CREATE TABLE ' || partition || ' (check (to_timestamp(created_at)::date = ''' || to_timestamp(NEW.created_at)::date || ''')) INHERITS (' || TG_TABLE_NAME || ');';
+        IF (TG_TABLE_NAME = LOWER('${TABLE_LAYERS}')) THEN
+            EXECUTE 'CREATE TRIGGER ' || partition || '_notify_event AFTER INSERT OR UPDATE OR DELETE ON ' || partition || ' FOR EACH ROW EXECUTE PROCEDURE notify_event();';
+        ELSIF (TG_TABLE_NAME = LOWER('${TABLE_TASKS}')) THEN
+            EXECUTE 'CREATE TRIGGER ' || partition || '_notify_event AFTER INSERT OR UPDATE OR DELETE ON ' || partition || ' FOR EACH ROW EXECUTE PROCEDURE notify_event();';
+        END IF;
+      END IF;
+      EXECUTE 'INSERT INTO ' || partition || ' SELECT(' || TG_TABLE_NAME || ' ' || quote_literal(NEW) || ').*;';
+      RETURN NULL;
+    END;
+$$ LANGUAGE plpgsql VOLATILE COST 101;
+
+CREATE TABLE IF NOT EXISTS ${TABLE_JOBS} (
+	    name VARCHAR(255),
+	    id VARCHAR(36) PRIMARY KEY,
+	    status VARCHAR(12) NOT NULL DEFAULT 'PENDING',
+	    etag VARCHAR(36) NOT NULL,
+	    created_at BIGINT NOT NULL DEFAULT 0,
+	    updated_at BIGINT NOT NULL DEFAULT 0,
+            UNIQUE (id, created_at)
+) WITH (OIDS=FALSE);
+CREATE OR REPLACE TRIGGER ${TABLE_JOBS}_partition_trigger BEFORE INSERT ON ${TABLE_JOBS} FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();
+
+-- Layer table has no FK to Job as we can only ever create Layers in CreateJob API call, in which we create
+-- the Job and it's Layers in a transaction (and optionally Tasks too)
+CREATE TABLE IF NOT EXISTS ${TABLE_LAYERS} (
+	    name VARCHAR(255),
+	    paused_at BIGINT NOT NULL DEFAULT 0,
+	    priority INT NOT NULL DEFAULT 0,
+	    id VARCHAR(36) PRIMARY KEY,
+	    status VARCHAR(12) NOT NULL DEFAULT 'PENDING',
+	    etag VARCHAR(36) NOT NULL,
+	    job_id VARCHAR(36) NOT NULL,
+	    created_at BIGINT NOT NULL DEFAULT 0,
+	    updated_at BIGINT NOT NULL DEFAULT 0,
+            UNIQUE (id, created_at)
+) WITH (OIDS=FALSE);
+CREATE OR REPLACE TRIGGER ${TABLE_LAYERS}_notify_event AFTER INSERT OR UPDATE OR DELETE ON ${TABLE_LAYERS} FOR EACH ROW EXECUTE PROCEDURE notify_event();
+CREATE OR REPLACE TRIGGER ${TABLE_LAYERS}_partition_trigger BEFORE INSERT ON ${TABLE_LAYERS} FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();
+
+CREATE TABLE IF NOT EXISTS ${TABLE_TASKS} (
+	    type VARCHAR(255) NOT NULL, 
+            args BYTEA,
+	    name VARCHAR(255),
+	    paused_at BIGINT NOT NULL DEFAULT 0,
+            retries INT NOT NULL DEFAULT 0,
+	    id VARCHAR(36) PRIMARY KEY,
+	    status VARCHAR(12) NOT NULL DEFAULT 'PENDING',
+	    etag VARCHAR(36) NOT NULL,
+	    job_id VARCHAR(36) NOT NULL,
+	    layer_id VARCHAR(36) NOT NULL,
+	    created_at BIGINT NOT NULL DEFAULT 0,
+	    updated_at BIGINT NOT NULL DEFAULT 0,
+            CONSTRAINT fk_layer_id FOREIGN KEY (layer_id) REFERENCES ${TABLE_LAYERS}(id) ON DELETE CASCADE,
+            UNIQUE (id, created_at)
+) WITH (OIDS=FALSE);
+CREATE OR REPLACE TRIGGER ${TABLE_TASKS}_notify_event AFTER INSERT OR UPDATE OR DELETE ON ${TABLE_TASKS} FOR EACH ROW EXECUTE PROCEDURE notify_event();
+CREATE OR REPLACE TRIGGER ${TABLE_TASKS}_partition_trigger BEFORE INSERT ON ${TABLE_TASKS} FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();
+
+CREATE TABLE IF NOT EXISTS ${TABLE_RUNS} (
+	    id VARCHAR(36) PRIMARY KEY,
+	    status VARCHAR(12) NOT NULL DEFAULT 'PENDING',
+	    etag VARCHAR(36) NOT NULL,
+	    job_id VARCHAR(36) NOT NULL,
+	    layer_id VARCHAR(36) NOT NULL,
+	    task_id VARCHAR(36) NOT NULL,
+	    queue_task_id VARCHAR(255) NOT NULL,
+	    message TEXT,
+	    created_at BIGINT NOT NULL DEFAULT 0,
+	    updated_at BIGINT NOT NULL DEFAULT 0,
+            UNIQUE (id, created_at),
+            CONSTRAINT fk_layer_id FOREIGN KEY (task_id) REFERENCES ${TABLE_TASKS}(id) ON DELETE CASCADE
+) WITH (OIDS=FALSE);
+CREATE OR REPLACE TRIGGER ${TABLE_RUNS}_partition_trigger BEFORE INSERT ON ${TABLE_RUNS} FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();

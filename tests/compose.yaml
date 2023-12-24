@@ -1,0 +1,11 @@
+services:
+  postgres:
+    image: "postgres:16"
+    ports:
+      - "15432:5432"
+    environment:
+      - POSTGRES_PASSWORD=test
+  redis:
+    image: "redis:alpine"
+    ports:
+      - "16379:6379"
