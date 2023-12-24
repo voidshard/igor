@@ -7,7 +7,7 @@ Open source distributed workflow system.
 * [Concepts](#concepts)
 * [API](#API)
 * [Building and Requirements](#building-and-requirements)
-* [UI](#ui)
+
 
 ## Before You Start
 
@@ -25,7 +25,7 @@ If you're after realtime task execution and / or don't need workflows for some e
 
 ## Usage
 
-As in [other](https://github.com/hibiken/asynq) [systems](https://github.com/kalbhor/Tasqueue) you register some process to perform some set of tasks like so
+As in [other](https://github.com/hibiken/asynq) [systems](https://github.com/kalbhor/Tasqueue) you register some process to perform work on your desired tasks like so
 ```golang
 import (
 	"github.com/voidshard/igor/pkg/api"
@@ -43,7 +43,7 @@ func main() {
     service.Run()
 }
 ```
-Note that in Igor you register a handler for multiple tasks, this is to allow the queue to perform task batching if the queue supports it & is configured to do so. 
+Note that in Igor you register a handler to accept multiple tasks at a time, this is to allow the queue to perform task batching / aggregation if the queue supports it & is configured to do so.
 
 The work [meta object](/pkg/queue/meta.go) passed in contains the [task object](/pkg/structs/task.go) and allows the user to set the tasks' status & an optional message. If your task handler doesn't explicitly set a status, the task will be set to completed by default.
 
@@ -93,20 +93,17 @@ Examples can be found in the test suite including infra with [docker compose](/t
 
 With a basic example out of the way, let's dive a bit more into terms & concepts.
 
-* Job
+* [Job](/pkg/structs/job.go)
     
     What might be called a 'workflow'. Essentially a collection of *Layers*
 
-* Layer
+* [Layer](/pkg/structs/layer.go)
     
     A Layer is a collection of tasks that belong to a Job. Layers have an 'priority' value, those with the same priority run at the same time, higher layers run only after previous layers have completed or are explicitly skipped (by a human). Tasks within a layer run in parallel.
 
-* Task
+* [Task](/pkg/structs/task.go)
     
     A task is a single unit of work, and belongs to a layer.
-
-
-Ok now that you have the basic objects in mind, onward with Igor concepts! 
 
 
 ###### Workflows as first class objects
@@ -118,34 +115,14 @@ Other systems allow you to define tasks with support for chains & groups as an a
 
 ###### Visibility, tracking all the things
 
-To explain by a counter example: In systems where workflows are secondary concerns it may not be possible to fetch the status of tasks not yet launched. That is, often these systems are implemented so that task A fires off task B when it completes in a sort of daisy-chain approach. Such a system has no way of knowing about task B (other than that, perhaps, task A has a post-run instruction) before it completes task A. From this point, task B is created and can be looked up.
+To explain by a counter example: In systems where workflows are secondary concerns it may not be possible to fetch the status of tasks not yet launched. That is, often these systems are implemented so that task A fires off task B when it completes in a sort of daisy-chain approach. Such a system has no way of knowing about task B (other than perhaps task A has a post-run instruction) before it completes task A. From this point, task B is created and can be looked up.
 
 In Igor the status of the entire workflow is known from the begining - whether it has run, will run or is currently running (or even rerunning).
 
 
-###### Live modification
-
-* Layer expansion at runtime 
-
-    You can create tasks in any layer up until it begins running, even while the parent job 
-    is running. It's a snap to launch a two layer job, where the first layer adds tasks to 
-    the second. Don't know how many tasks you're going to need exactly? Not a problem.
-
-* Pause and Unpause
-
-    Pause and unpause any task or layer. This don't stop currently running tasks, but 
-    nothing paused will be enqueued. You can even create things paused if you want.
-
-* Kill and retry
-
-    If pausing isn't your thing you can order Igor to kill tasks whenever you feel like it.
-    You can also retry - kill and then remark task(s) as pending (ie to-be-run).
-    You can of course, continue telling Igor to retry such a task until you're blue in the face.
-
-
 ###### Architecture 
 
-Igor has a few working parts & interfaces are used so sections can be replaced or expanded on.
+Igor has a few working parts & interfaces are used everywhere so sections can be replaced or expanded on.
 
 * [Database](/pkg/database/interface.go)
 
@@ -157,11 +134,11 @@ Igor has a few working parts & interfaces are used so sections can be replaced o
 
   What Igor uses to actually run tasks. Igor handles telling the queue *when* to run something and leaves the 
   queue to work out *how* to run it. Igor also leaves other details like retrying & batching / aggregation to the queue too.
-  The queue currently used is [asynq](https://github.com/hibiken/asynq) which supports [aggregation!](https://github.com/hibiken/asynq/wiki/Task-aggregation)
+  The queue currently used is [asynq](https://github.com/hibiken/asynq) which supports [aggregation!](https://github.com/hibiken/asynq/wiki/Task-aggregation) (as all task queues should *ahem*).
 
 * [API](/pkg/api/interface.go)
 
-  The functionality provided by Igor to external clients. For those wishing to keep things in native Go you'll probably want the [api service](/pkg/api/service.go) with provides the ability to Register() tasks with the underlying queue.
+  The functionality provided by Igor to external clients. For those wishing to keep things in native Go you'll probably want the [api service](/pkg/api/service.go) with provides the ability to Register() handlers with the underlying queue.
 
 * [HTTP](/pkg/api/http/)
 
@@ -249,12 +226,6 @@ that you can then launch with
 ```bash
 ./ui/start.py
 ```
-
-
-## UI
-
-Igor includes a PyQt5 UI that gives visibility into the system and running objects. It also gives the ability to pause/unpause kill/retry things in Igor. Checkout the [/ui folder](/ui).
-
 Fair warning this UI is ported from the previous version of Igor and it may be replaced with a web UI at some point.
 
 
@@ -262,27 +233,27 @@ Fair warning this UI is ported from the previous version of Igor and it may be r
 
 Terms you'll see thrown about.
 
-* Pending (state)
+* Pending ([status](/pkg/structs/status.go))
 
     The job/layer/task has been created, but has yet to run.
     
-* Queued (state)
+* Queued ([status](/pkg/structs/status.go))
 
     Igor has scheduled the task to run.
 
-* Running (state)
+* Running ([status](/pkg/structs/status.go))
     
     The job/layer/task is currently running.
     
-* Completed (state)
+* Completed ([status](/pkg/structs/status.go))
    
     The job/layer/task has completed.
     
-* Errored (state)
+* Errored ([status](/pkg/structs/status.go))
     
     The job/layer/task is errored, or contains errors, Igor will not continue without human intervention.
 
-* Skipped (state)
+* Skipped ([status](/pkg/structs/status.go))
 
     An explicitly user set state that Igor regards as "completed" (ie. it does not block following tasks / layers).
 
@@ -290,6 +261,7 @@ Terms you'll see thrown about.
     
     Tells Igor not to schedule the paused layer/task. This does *not* make Igor stop an already running task. 
     If you want to pause *and* stop a task you'll need to follow this up with a kill.
+    Objects in Igor keep 'paused' as a 'paused_at' unix timestamp, with a value > 0 considered "paused"
 
 * Kill (action)
 
@@ -297,7 +269,7 @@ Terms you'll see thrown about.
 
 * Retry (action)
 
-    Kill & explicitly enqueue.
+    Kill & explicitly enqueue a task for reprocessing.
 
 
 ## TODO
