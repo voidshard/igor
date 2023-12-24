@@ -18,7 +18,7 @@ var (
 			ie.ErrNoLayers,
 			ie.ErrNoTasks,
 			ie.ErrNoTaskType,
-			ie.ErrParentNoFound,
+			ie.ErrParentNotFound,
 			ie.ErrETagMismatch,
 			ie.ErrMaxExceeded,
 			ie.ErrInvalidState,

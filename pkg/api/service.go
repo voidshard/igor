@@ -366,7 +366,7 @@ func (c *Service) CreateTasks(in []*structs.CreateTaskRequest) ([]*structs.Task,
 			return nil, err
 		}
 		if len(layers) != len(layerIDs) { // we require all the layers to exist
-			return nil, fmt.Errorf("%w expected %d layers, got %d", errors.ErrParentNoFound, len(layerIDs), len(layers))
+			return nil, fmt.Errorf("%w expected %d layers, got %d", errors.ErrParentNotFound, len(layerIDs), len(layers))
 		}
 		for _, l := range layers {
 			layersByID[l.ID] = l
@@ -398,7 +398,7 @@ func (c *Service) CreateTasks(in []*structs.CreateTaskRequest) ([]*structs.Task,
 	for _, t := range in {
 		parentLayer, ok := layersByID[t.LayerID]
 		if !ok || parentLayer == nil {
-			return nil, fmt.Errorf("%w parent layer %s not found for task", errors.ErrParentNoFound, t.LayerID)
+			return nil, fmt.Errorf("%w parent layer %s not found for task", errors.ErrParentNotFound, t.LayerID)
 		}
 		if !layerCanHaveMoreTasks(parentLayer) {
 			return nil, fmt.Errorf("%w parent layer %s cannot have more tasks", errors.ErrInvalidState, t.LayerID)

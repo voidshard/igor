@@ -13,21 +13,25 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Postgres is an igor database implementation that uses postgres.
 type Postgres struct {
 	opts *Options
 	pool *pgxpool.Pool
 }
 
+// NewPostgres returns a new Postgres database connection.
 func NewPostgres(opts *Options) (*Postgres, error) {
 	pool, err := pgxpool.New(context.Background(), opts.URL)
 	return &Postgres{pool: pool, opts: opts}, err
 }
 
+// Close shuts down the database connection.
 func (p *Postgres) Close() error {
 	p.pool.Close()
 	return nil
 }
 
+// InsertJob inserts a job, it's layers & tasks into the database in a single transaction
 func (p *Postgres) InsertJob(j *structs.Job, ls []*structs.Layer, ts []*structs.Task) error {
 	// before we open a transaction, build all the SQL
 
@@ -93,6 +97,7 @@ func (p *Postgres) InsertJob(j *structs.Job, ls []*structs.Layer, ts []*structs.
 	return err
 }
 
+// InsertTasks inserts a set of tasks into the database in a single transaction
 func (p *Postgres) InsertTasks(in []*structs.Task) error {
 	tstrs, targs := []string{}, []interface{}{}
 	for _, t := range in {
@@ -115,22 +120,27 @@ func (p *Postgres) InsertTasks(in []*structs.Task) error {
 	return err
 }
 
+// SetLayersPaused sets the paused state of the given layers
 func (p *Postgres) SetLayersPaused(at int64, newTag string, ids []*structs.ObjectRef) (int64, error) {
 	return p.setPaused(string(structs.KindLayer), at, newTag, ids)
 }
 
+// SetTasksPaused sets the paused state of the given tasks
 func (p *Postgres) SetTasksPaused(at int64, newTag string, ids []*structs.ObjectRef) (int64, error) {
 	return p.setPaused(string(structs.KindTask), at, newTag, ids)
 }
 
+// SetJobsStatus sets the status of the given jobs
 func (p *Postgres) SetJobsStatus(status structs.Status, newTag string, ids []*structs.ObjectRef) (int64, error) {
 	return p.setStatus(string(structs.KindJob), status, newTag, ids)
 }
 
+// SetLayersStatus sets the status of the given layers
 func (p *Postgres) SetLayersStatus(status structs.Status, newTag string, ids []*structs.ObjectRef) (int64, error) {
 	return p.setStatus(string(structs.KindLayer), status, newTag, ids)
 }
 
+// SetTasksStatus sets the status of the given tasks
 func (p *Postgres) SetTasksStatus(status structs.Status, newTag string, ids []*structs.ObjectRef, msg ...string) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
@@ -161,6 +171,7 @@ func (p *Postgres) SetTasksStatus(status structs.Status, newTag string, ids []*s
 	return 0, err
 }
 
+// SetTaskQueueID sets the queue id & status of the given task
 func (p *Postgres) SetTaskQueueID(taskID, etag, newEtag, queueTaskID string, state structs.Status) error {
 	qstr := fmt.Sprintf(`UPDATE %s SET queue_task_id=$1, etag=$2, updated_at=$3, status=$4 WHERE id=$5 AND etag=$6;`, string(structs.KindTask))
 	args := []interface{}{queueTaskID, newEtag, timeNow(), state, taskID, etag}
@@ -182,6 +193,7 @@ func (p *Postgres) SetTaskQueueID(taskID, etag, newEtag, queueTaskID string, sta
 	return nil
 }
 
+// Jobs returns jobs matching the given query
 func (p *Postgres) Jobs(q *structs.Query) ([]*structs.Job, error) {
 	where, args := toSqlQuery(map[string][]string{
 		"id":     q.JobIDs,
@@ -228,6 +240,7 @@ func (p *Postgres) Jobs(q *structs.Query) ([]*structs.Job, error) {
 	return jobs, nil
 }
 
+// Layers returns layers matching the given query
 func (p *Postgres) Layers(q *structs.Query) ([]*structs.Layer, error) {
 	where, args := toSqlQuery(map[string][]string{
 		"job_id": q.JobIDs,
@@ -278,6 +291,7 @@ func (p *Postgres) Layers(q *structs.Query) ([]*structs.Layer, error) {
 	return layers, nil
 }
 
+// Tasks returns tasks matching the given query
 func (p *Postgres) Tasks(q *structs.Query) ([]*structs.Task, error) {
 	where, args := toSqlQuery(map[string][]string{
 		"job_id":   q.JobIDs,
@@ -333,6 +347,8 @@ func (p *Postgres) Tasks(q *structs.Query) ([]*structs.Task, error) {
 	return tasks, nil
 }
 
+// Changes returns a stream of changes to the database (see pkg/database/changes) this is implemented
+// in pkg/database/postgres_change_stream.go
 func (p *Postgres) Changes() (changes.Stream, error) {
 	ctx := context.Background()
 	conn, err := p.pool.Acquire(ctx)
@@ -347,6 +363,7 @@ func (p *Postgres) Changes() (changes.Stream, error) {
 	}, err
 }
 
+// setStatus sets the status of the given table's rows, generic version of higher level funcs
 func (p *Postgres) setStatus(table string, status structs.Status, newTag string, ids []*structs.ObjectRef) (int64, error) {
 	qstr, args := toSqlTags(4, ids)
 	qstr = fmt.Sprintf(`UPDATE %s SET status=$1, etag=$2, updated_at=$3 WHERE %s;`, table, qstr)
@@ -366,6 +383,7 @@ func (p *Postgres) setStatus(table string, status structs.Status, newTag string,
 	return 0, err
 }
 
+// setPaused sets the paused state of the given table's rows, generic version of higher level funcs
 func (p *Postgres) setPaused(table string, at int64, newTag string, ids []*structs.ObjectRef) (int64, error) {
 	qstr, args := toSqlTags(4, ids)
 	qstr = fmt.Sprintf(`UPDATE %s SET paused_at=$1, etag=$2, updated_at=$3 WHERE %s;`, table, qstr)
@@ -385,6 +403,7 @@ func (p *Postgres) setPaused(table string, at int64, newTag string, ids []*struc
 	return 0, err
 }
 
+// toSqlQuery converts query data into a SQL query string & args
 func toSqlQuery(in map[string][]string, upB, upA, crB, crA int64) (string, []interface{}) {
 	if in == nil {
 		in = map[string][]string{}
@@ -421,6 +440,7 @@ func toSqlQuery(in map[string][]string, upB, upA, crB, crA int64) (string, []int
 	return fmt.Sprintf("WHERE %s", strings.Join(and, " AND ")), args
 }
 
+// toSqlIn converts a list of strings into a SQL IN clause
 func toSqlIn(offset int, field string, args []string) (string, []interface{}) {
 	if len(args) == 0 {
 		return "", []interface{}{}
@@ -434,8 +454,9 @@ func toSqlIn(offset int, field string, args []string) (string, []interface{}) {
 	return fmt.Sprintf("%s IN (%s)", field, strings.Join(vals, ", ")), ifargs
 }
 
+// toListInterface converts a list of strings into a list of interfaces.
 func toListInterface(in []string) []interface{} {
-	// This is so dumb..
+	// This is so dumb.. surely Go should realise a []string can be cast to []interface{} or something
 	l := make([]interface{}, len(in))
 	for i, v := range in {
 		l[i] = v
@@ -443,6 +464,7 @@ func toListInterface(in []string) []interface{} {
 	return l
 }
 
+// toSqlTags converts a list of object refs into a SQL query string & args
 func toSqlTags(offset int, ids []*structs.ObjectRef) (string, []interface{}) {
 	vals := []string{}
 	subs := []interface{}{}
@@ -453,6 +475,7 @@ func toSqlTags(offset int, ids []*structs.ObjectRef) (string, []interface{}) {
 	return strings.Join(vals, " OR "), subs
 }
 
+// toJobSqlArgs converts a job into a SQL query string & args (for an insert)
 func toJobSqlArgs(offset int, j *structs.Job) (string, []interface{}) {
 	vals := []string{}
 	for i := offset; i < 6+offset; i++ {
@@ -472,6 +495,7 @@ func toJobSqlArgs(offset int, j *structs.Job) (string, []interface{}) {
 	}
 }
 
+// toLayerSqlArgs converts a layer into a SQL query string & args (for an insert)
 func toLayerSqlArgs(offset int, l *structs.Layer) (string, []interface{}) {
 	vals := []string{}
 	for i := offset; i < 9+offset; i++ {
@@ -494,6 +518,7 @@ func toLayerSqlArgs(offset int, l *structs.Layer) (string, []interface{}) {
 	}
 }
 
+// toTaskSqlArgs converts a task into a SQL query string & args (for an insert)
 func toTaskSqlArgs(offset int, t *structs.Task) (string, []interface{}) {
 	vals := []string{}
 	for i := offset; i < 14+offset; i++ {
@@ -521,6 +546,7 @@ func toTaskSqlArgs(offset int, t *structs.Task) (string, []interface{}) {
 	}
 }
 
+// statusToStrings converts a list of statuses into a list of strings
 func statusToStrings(in []structs.Status) []string {
 	if in == nil || len(in) == 0 {
 		return nil
@@ -532,6 +558,7 @@ func statusToStrings(in []structs.Status) []string {
 	return out
 }
 
+// timeNow returns the current time in unix seconds
 func timeNow() int64 {
 	return time.Now().Unix()
 }

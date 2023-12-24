@@ -4,6 +4,7 @@ import (
 	"github.com/voidshard/igor/pkg/structs"
 )
 
+// Queue is an interface for a task queue.
 type Queue interface {
 	// Register a task handler. This is a function that will be called when a task is enqueued.
 	//

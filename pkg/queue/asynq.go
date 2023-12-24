@@ -22,6 +22,8 @@ const (
 	asyncAggRune     = "¬"
 )
 
+// Asynq is a Queue implementation that uses asynq.
+// See github.com/hibiken/asynq
 type Asynq struct {
 	opts *Options
 
@@ -37,10 +39,12 @@ type Asynq struct {
 	mux  *asynq.ServeMux
 	srv  *asynq.Server
 
-	//
+	// errs is a channel of errors that we'll send to
+	// Currenty we just log these, probably we should support some output / callback.
 	errs chan error
 }
 
+// NewAsynqQueue returns a new Asynq queue with the given settings
 func NewAsynqQueue(svc database.QueueDB, opts *Options) (*Asynq, error) {
 	ins := asynq.NewInspector(asynq.RedisClientOpt{Addr: opts.URL})
 	cli := asynq.NewClient(asynq.RedisClientOpt{Addr: opts.URL})
@@ -52,6 +56,7 @@ func NewAsynqQueue(svc database.QueueDB, opts *Options) (*Asynq, error) {
 	}, nil
 }
 
+// Close shuts down the queue
 func (a *Asynq) Close() error {
 	if a.srv == nil {
 		return nil
@@ -62,6 +67,7 @@ func (a *Asynq) Close() error {
 	return nil
 }
 
+// Run starts the queue, this is only required for workers (ie. handlers)
 func (a *Asynq) Run() error {
 	if a.srv == nil {
 		a.buildServer()
@@ -69,6 +75,17 @@ func (a *Asynq) Run() error {
 	return a.srv.Run(a.mux)
 }
 
+// Register a handler for a task type, this allows us to process tasks (indicated by their Type).
+//
+// Note that we pass here a []*Meta, this is a list of Task wrappers.
+// A user may optionally call SetError(), SetComplete() or SetRunning() per Meta (task) in the list
+// to have this value reflected in the database.
+//
+// If a user does *not* call one of these, Igor implicitly calls SetComplete() for them at the conclusion
+// of the handler.
+//
+// Note that returning an error from this handler does not imply SetError() is called, as it is assumed
+// that already completed work is still valid.
 func (a *Asynq) Register(task string, handler func(work []*Meta) error) error {
 	if a.mux == nil {
 		a.buildServer()
@@ -92,11 +109,13 @@ func (a *Asynq) Register(task string, handler func(work []*Meta) error) error {
 	return nil
 }
 
+// Kill calls the our underlying queue to cancel a task by it's ID (given to us when we Enqueue() it).
 func (a *Asynq) Kill(queuedTaskID string) error {
 	// Best effort cancel; asynq can't guarantee this will kill it
 	return a.ins.CancelProcessing(queuedTaskID)
 }
 
+// deaggregateTasks takes a task that has been aggregated and returns a list of tasks.
 func (a *Asynq) deaggregateTasks(t *asynq.Task) ([]*Meta, error) {
 	// parse into IDs (the payloads)
 	taskIDs := []string{}
@@ -123,6 +142,7 @@ func (a *Asynq) deaggregateTasks(t *asynq.Task) ([]*Meta, error) {
 	return ms, nil
 }
 
+// Enqueue a task to be processed by a worker.
 func (a *Asynq) Enqueue(task *structs.Task) (string, error) {
 	qtask := asynq.NewTask(task.Type, []byte(task.ID), asynq.MaxRetry(int(task.Retries)))
 	info, err := a.cli.Enqueue(qtask, asynq.Queue(asyncWorkQueue), asynq.Group(aggregatedTask(task.Type)))
@@ -132,6 +152,11 @@ func (a *Asynq) Enqueue(task *structs.Task) (string, error) {
 	return info.ID, nil
 }
 
+// buildServer creates a new server & mux for us to use.
+//
+// We set this up with a simple aggregator that just concatenates task IDs together.
+// We only need to pass the task ID, since Igor stores the rest of the data in the database (which we can
+// look up by ID in batches pretty efficiently).
 func (a *Asynq) buildServer() {
 	a.lock.Lock()
 	defer a.lock.Unlock()
@@ -161,6 +186,10 @@ func (a *Asynq) buildServer() {
 	}()
 }
 
+// aggregate takes multiple tasks from Asynq and aggregates them into a single task.
+//
+// We do this by concatenating the task IDs together, separated by a rune.
+// This is what deaggregateTasks() does in reverse.
 func aggregate(group string, tasks []*asynq.Task) *asynq.Task {
 	var b strings.Builder
 	for _, t := range tasks {
@@ -173,6 +202,9 @@ func aggregate(group string, tasks []*asynq.Task) *asynq.Task {
 	return asynq.NewTask(group, []byte(b.String()))
 }
 
+// aggregatedTask returns the name of the aggregated task for a given group.
+//
+// Internally we set this in Asynq as the handler for a group so we can do automatic aggregation.
 func aggregatedTask(group string) string {
 	return fmt.Sprintf("aggregated%s", group)
 }

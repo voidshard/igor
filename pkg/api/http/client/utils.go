@@ -12,6 +12,7 @@ import (
 	"github.com/voidshard/igor/pkg/structs"
 )
 
+// genericPost is a helper to POST data to a given URL and unmarshal the response
 func genericPost(addr *url.URL, in interface{}, out interface{}) error {
 	data, err := json.Marshal(in)
 	if err != nil {
@@ -38,6 +39,7 @@ func genericPost(addr *url.URL, in interface{}, out interface{}) error {
 	return json.Unmarshal(body, out)
 }
 
+// genericPatch is a helper to PATCH data to a given URL and unmarshal the response
 func genericPatch(addr *url.URL, in interface{}, out interface{}) error {
 	data, err := json.Marshal(in)
 	if err != nil {
@@ -72,6 +74,8 @@ func genericPatch(addr *url.URL, in interface{}, out interface{}) error {
 	return json.Unmarshal(body, out)
 }
 
+// genericGet is a helper to GET data from a given URL and unmarshal the response.
+// Implies the Query string is already set, if needed.
 func genericGet(addr *url.URL, out interface{}) error {
 	resp, err := http.Get(addr.String())
 	if err != nil {
@@ -96,6 +100,7 @@ func genericGet(addr *url.URL, out interface{}) error {
 	return json.Unmarshal(body, out)
 }
 
+// setQueryString sets the query string of a URL based on the given query object.
 func setQueryString(u *url.URL, q *structs.Query) {
 	q.Sanitize()
 	values := u.Query()

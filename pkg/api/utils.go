@@ -11,9 +11,13 @@ import (
 )
 
 var (
+	// timeNow is a function that returns the current time in unix seconds.
+	// Set this to a mock function for testing.
 	timeNow = func() int64 { return time.Now().Unix() }
 )
 
+// determineJobStatus takes a list of layers and returns the status of the job
+// as well as the next layers that should be run (if any).
 func determineJobStatus(layers []*structs.Layer) (structs.Status, []*structs.Layer) {
 	sort.Slice(layers, func(i, j int) bool {
 		return layers[i].Priority < layers[j].Priority
@@ -57,6 +61,7 @@ func determineJobStatus(layers []*structs.Layer) (structs.Status, []*structs.Lay
 	return structs.COMPLETED, canRun
 }
 
+// layerCanHaveMoreTasks returns true if the given layer can have more tasks.
 func layerCanHaveMoreTasks(layer *structs.Layer) bool {
 	if structs.IsFinalStatus(layer.Status) {
 		return false
@@ -71,6 +76,8 @@ func layerCanHaveMoreTasks(layer *structs.Layer) bool {
 	}
 }
 
+// validateToggles takes a list of object references and returns a map of kind -> object references.
+// It also validates given inputs & spits out an error if something isn't aggreeable.
 func validateToggles(in []*structs.ObjectRef) (map[structs.Kind][]*structs.ObjectRef, error) {
 	out := map[structs.Kind][]*structs.ObjectRef{}
 	if in == nil || len(in) == 0 {
@@ -96,6 +103,7 @@ func validateToggles(in []*structs.ObjectRef) (map[structs.Kind][]*structs.Objec
 	return out, nil
 }
 
+// validateKind returns an error if the given kind is not valid.
 func validateKind(k structs.Kind) error {
 	switch k {
 	case structs.KindJob, structs.KindLayer, structs.KindTask:
@@ -105,6 +113,9 @@ func validateKind(k structs.Kind) error {
 	}
 }
 
+// buildJob takes a CreateJobRequest and returns a Job, Layers, Tasks and a map of LayerID -> Tasks.
+//
+// Implies that the input has been validated previously.
 func buildJob(cjr *structs.CreateJobRequest) (*structs.Job, []*structs.Layer, []*structs.Task, map[string][]*structs.Task) {
 	etag := utils.NewRandomID()
 	job := &structs.Job{
@@ -156,6 +167,7 @@ func buildJob(cjr *structs.CreateJobRequest) (*structs.Job, []*structs.Layer, []
 	return job, layers, tasks, tasks_by_layer
 }
 
+// validateTaskSpec returns an error if the given task spec is invalid.
 func validateTaskSpec(t *structs.TaskSpec) error {
 	if len(t.Name) > maxNameLength {
 		return fmt.Errorf("%w task name %s is %d chars, max %d", errors.ErrMaxExceeded, t.Name, len(t.Name), maxNameLength)
@@ -172,6 +184,7 @@ func validateTaskSpec(t *structs.TaskSpec) error {
 	return nil
 }
 
+// validateCreateJobRequest returns an error if the given job request is invalid.
 func validateCreateJobRequest(cjr *structs.CreateJobRequest) error {
 	if cjr.Layers == nil || len(cjr.Layers) == 0 {
 		return errors.ErrNoLayers

@@ -21,6 +21,7 @@ const (
 	wait = 30 * time.Second
 )
 
+// Server is the http server for igor
 type Server struct {
 	addr       string
 	static     string
@@ -30,6 +31,7 @@ type Server struct {
 	httpserver *http.Server
 }
 
+// ServeForever starts the server and blocks until it's closed
 func (s *Server) ServeForever(svc api.API) error {
 	s.svc = svc
 
@@ -79,6 +81,7 @@ func (s *Server) ServeForever(svc api.API) error {
 	return nil
 }
 
+// Jobs handles requests for the Jobs API endpoint
 func (s *Server) Jobs(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -90,6 +93,7 @@ func (s *Server) Jobs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// createJob handles requests to create a new job
 func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	cjr := &structs.CreateJobRequest{}
 	err := unmarshalJson(w, r, cjr)
@@ -109,6 +113,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// getJobs handles requests to get jobs
 func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 	q := &structs.Query{}
 	err := unmarshalQuery(w, r, q)
@@ -131,6 +136,7 @@ func (s *Server) getJobs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Layers handles requests for the Layers API endpoint
 func (s *Server) Layers(w http.ResponseWriter, r *http.Request) {
 	// only GET is allowed, so we know what this request is
 	q := &structs.Query{}
@@ -154,6 +160,7 @@ func (s *Server) Layers(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Tasks handles requests for the Tasks API endpoint
 func (s *Server) Tasks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -165,6 +172,7 @@ func (s *Server) Tasks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// createTasks handles requests to create new task(s)
 func (s *Server) createTasks(w http.ResponseWriter, r *http.Request) {
 	ctr := []*structs.CreateTaskRequest{}
 	err := unmarshalJson(w, r, &ctr)
@@ -193,6 +201,7 @@ func (s *Server) createTasks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// getTasks handles requests to get tasks
 func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 	q := &structs.Query{}
 	err := unmarshalQuery(w, r, q)
@@ -215,6 +224,8 @@ func (s *Server) getTasks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ToggleOp is a helper to create a handler for PATCH requests that call some simple operation.
+// Ie. pause, unpause, skip, kill, retry
 func (s *Server) ToggleOp(fn func([]*structs.ObjectRef) (int64, error)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tog := []*structs.ObjectRef{}
@@ -236,15 +247,19 @@ func (s *Server) ToggleOp(fn func([]*structs.ObjectRef) (int64, error)) func(htt
 	}
 }
 
+// Close shuts down the server
 func (s *Server) Close() error {
 	s.exit <- os.Interrupt
 	return nil
 }
 
+// Health is a simple health check endpoint
 func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
+	// TODO: improve with actual stats or something
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
+// NewServer creates a new server
 func NewServer(addr, static string, debug bool) *Server {
 	return &Server{
 		static: static,
