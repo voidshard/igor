@@ -5,6 +5,7 @@ import (
 
 	"github.com/jessevdk/go-flags"
 
+	"github.com/voidshard/igor/internal/utils"
 	"github.com/voidshard/igor/pkg/api"
 	"github.com/voidshard/igor/pkg/api/http/server"
 	"github.com/voidshard/igor/pkg/database"
@@ -20,11 +21,18 @@ const (
 )
 
 var CLI struct {
-	Addr string `long:"addr" env:"ADDR" description:"Address to bind to" default:"localhost:8100"`
+	Addr    string `long:"addr" env:"ADDR" description:"Address to bind to" default:"localhost:8100"`
+	TLSCert string `long:"cert" env:"CERT" description:"Path to TLS certificate"`
+	TLSKey  string `long:"key" env:"KEY" description:"Path to TLS key"`
 
 	DatabaseURL string `long:"database-url" env:"DATABASE_URL" description:"Database connection string"`
 
-	RedisURL string `long:"redis-url" env:"REDIS_URL" description:"Redis connection string"`
+	QueueURL       string `long:"queue-url" env:"QUEUE_URL" description:"Queue connection string"`
+	QueuePass      string `long:"queue-pass" env:"QUEUE_PASS" description:"Queue password"`
+	QueueUser      string `long:"queue-user" env:"QUEUE_USER" description:"Queue username"`
+	QueueTLSCert   string `long:"queue-tls-cert" env:"QUEUE_TLS_CERT" description:"Queue TLS certificate"`
+	QueueTLSKey    string `long:"queue-tls-key" env:"QUEUE_TLS_KEY" description:"Queue TLS key"`
+	QueueTLSCaCert string `long:"queue-tls-ca-cert" env:"QUEUE_TLS_CA_CERT" description:"Queue TLS CA certificate"`
 
 	Debug bool `long:"debug" env:"DEBUG" description:"Enable debug logging"`
 
@@ -60,19 +68,25 @@ func main() {
 	if CLI.DatabaseURL == "" {
 		CLI.DatabaseURL = defaultDatabaseURL
 	}
-	if CLI.RedisURL == "" {
-		CLI.RedisURL = defaultRedisURL
+
+	if CLI.QueueURL == "" {
+		CLI.QueueURL = defaultRedisURL
 	}
+	tlsCfg, err := utils.TLSConfig(CLI.QueueTLSCaCert, CLI.QueueTLSCert, CLI.QueueTLSKey)
+	if err != nil {
+		panic(err)
+	}
+	qOpts := &queue.Options{URL: CLI.QueueURL, Username: CLI.QueueUser, Password: CLI.QueuePass, TLSConfig: tlsCfg}
 
 	api, err := api.New(
 		&database.Options{URL: CLI.DatabaseURL},
-		&queue.Options{URL: CLI.RedisURL},
+		qOpts,
 		api.OptionsClientDefault(),
 	)
 	if err != nil {
 		panic(err)
 	}
 
-	s := server.NewServer(CLI.Addr, CLI.StaticDir, CLI.Debug)
+	s := server.NewServer(CLI.Addr, CLI.StaticDir, CLI.TLSCert, CLI.TLSKey, CLI.Debug)
 	s.ServeForever(api)
 }

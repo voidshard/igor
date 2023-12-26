@@ -46,8 +46,14 @@ type Asynq struct {
 
 // NewAsynqQueue returns a new Asynq queue with the given settings
 func NewAsynqQueue(svc database.QueueDB, opts *Options) (*Asynq, error) {
-	ins := asynq.NewInspector(asynq.RedisClientOpt{Addr: opts.URL})
-	cli := asynq.NewClient(asynq.RedisClientOpt{Addr: opts.URL})
+	redisOpts := asynq.RedisClientOpt{
+		Addr:      opts.URL,
+		Username:  opts.Username,
+		Password:  opts.Password,
+		TLSConfig: opts.TLSConfig,
+	}
+	ins := asynq.NewInspector(redisOpts)
+	cli := asynq.NewClient(redisOpts)
 	return &Asynq{
 		opts: opts,
 		ins:  ins,

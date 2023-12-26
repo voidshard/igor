@@ -25,6 +25,8 @@ const (
 type Server struct {
 	addr       string
 	static     string
+	cert       string
+	key        string
 	debug      bool
 	svc        api.API
 	exit       chan os.Signal
@@ -65,9 +67,14 @@ func (s *Server) ServeForever(svc api.API) error {
 
 	go func() {
 		log.Println("Listening on", s.httpserver.Addr)
-		if err := s.httpserver.ListenAndServe(); err != nil {
-			log.Println(err)
+		var err error
+		if s.cert != "" && s.key != "" {
+			log.Println("TLS enabled (", s.cert, s.key, ")")
+			err = s.httpserver.ListenAndServeTLS(s.cert, s.key)
+		} else {
+			err = s.httpserver.ListenAndServe()
 		}
+		log.Println(err)
 	}()
 
 	signal.Notify(s.exit, os.Interrupt)
@@ -260,9 +267,11 @@ func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 // NewServer creates a new server
-func NewServer(addr, static string, debug bool) *Server {
+func NewServer(addr, static, certFile, keyFile string, debug bool) *Server {
 	return &Server{
 		static: static,
+		cert:   certFile,
+		key:    keyFile,
 		addr:   addr,
 		debug:  debug,
 		exit:   make(chan os.Signal, 1),
