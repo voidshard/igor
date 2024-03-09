@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -46,10 +47,13 @@ type Asynq struct {
 
 // NewAsynqQueue returns a new Asynq queue with the given settings
 func NewAsynqQueue(svc database.QueueDB, opts *Options) (*Asynq, error) {
+	opts.setDefaults()
+	opts.URL = strings.Replace(opts.URL, "$"+opts.UsernameEnvVar, os.Getenv(opts.UsernameEnvVar), 1)
+	opts.URL = strings.Replace(opts.URL, "$"+opts.PasswordEnvVar, os.Getenv(opts.PasswordEnvVar), 1)
 	redisOpts := asynq.RedisClientOpt{
 		Addr:      opts.URL,
-		Username:  opts.Username,
-		Password:  opts.Password,
+		Username:  os.Getenv(opts.UsernameEnvVar),
+		Password:  os.Getenv(opts.PasswordEnvVar),
 		TLSConfig: opts.TLSConfig,
 	}
 	ins := asynq.NewInspector(redisOpts)

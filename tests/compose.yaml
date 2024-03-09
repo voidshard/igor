@@ -5,7 +5,9 @@ services:
       context: ../
       dockerfile: tests/Dockerfile.dummyworker
     environment:
-      - DATABASE_URL=postgres://igorreadwrite:readwrite@postgres:5432/igor?sslmode=disable&search_path=igor
+      - DATABASE_URL=postgres://$DATABASE_USER:$DATABASE_PASSWORD@postgres:5432/igor?sslmode=disable&search_path=igor
+      - DATABASE_USER=igorreadwrite
+      - DATABASE_PASSWORD=readwrite
       - REDIS_URL=redis:6379
     depends_on:
       - postgres
@@ -21,7 +23,9 @@ services:
     ports:
       - "8100:8100"
     environment:
-      - DATABASE_URL=postgres://igorreadwrite:readwrite@postgres:5432/igor?sslmode=disable&search_path=igor
+      - DATABASE_URL=postgres://$DATABASE_USER:$DATABASE_PASSWORD@postgres:5432/igor?sslmode=disable&search_path=igor
+      - DATABASE_USER=igorreadwrite
+      - DATABASE_PASSWORD=readwrite
       - REDIS_URL=redis:6379
       - ADDR=0.0.0.0:8100
       - DEBUG=true
@@ -37,7 +41,9 @@ services:
       context: ../
       dockerfile: Dockerfile.worker
     environment:
-      - DATABASE_URL=postgres://igorreadwrite:readwrite@postgres:5432/igor?sslmode=disable&search_path=igor
+      - DATABASE_URL=postgres://$DATABASE_USER:$DATABASE_PASSWORD@postgres:5432/igor?sslmode=disable&search_path=igor
+      - DATABASE_USER=igorreadwrite
+      - DATABASE_PASSWORD=readwrite
       - REDIS_URL=redis:6379
       - DEBUG=true
     depends_on:

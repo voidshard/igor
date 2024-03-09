@@ -28,8 +28,6 @@ var CLI struct {
 	DatabaseURL string `long:"database-url" env:"DATABASE_URL" description:"Database connection string"`
 
 	QueueURL       string `long:"queue-url" env:"QUEUE_URL" description:"Queue connection string"`
-	QueuePass      string `long:"queue-pass" env:"QUEUE_PASS" description:"Queue password"`
-	QueueUser      string `long:"queue-user" env:"QUEUE_USER" description:"Queue username"`
 	QueueTLSCert   string `long:"queue-tls-cert" env:"QUEUE_TLS_CERT" description:"Queue TLS certificate"`
 	QueueTLSKey    string `long:"queue-tls-key" env:"QUEUE_TLS_KEY" description:"Queue TLS key"`
 	QueueTLSCaCert string `long:"queue-tls-ca-cert" env:"QUEUE_TLS_CA_CERT" description:"Queue TLS CA certificate"`
@@ -76,7 +74,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	qOpts := &queue.Options{URL: CLI.QueueURL, Username: CLI.QueueUser, Password: CLI.QueuePass, TLSConfig: tlsCfg}
+	qOpts := &queue.Options{URL: CLI.QueueURL, TLSConfig: tlsCfg}
 
 	api, err := api.New(
 		&database.Options{URL: CLI.DatabaseURL},
