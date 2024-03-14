@@ -5,7 +5,7 @@ go 1.21.4
 require (
 	github.com/gorilla/mux v1.8.1
 	github.com/hibiken/asynq v0.24.1
-	github.com/jackc/pgx/v5 v5.5.0
+	github.com/jackc/pgx/v5 v5.5.4
 	github.com/jessevdk/go-flags v1.5.0
 	github.com/stretchr/testify v1.8.4
 	go.uber.org/mock v0.3.0
