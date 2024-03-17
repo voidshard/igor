@@ -81,6 +81,7 @@ func (c *cmdMigrateForce) Execute(args []string) error {
 	}
 	defer db.Close()
 
+	fmt.Println("Forcing version to", c.Version)
 	return m.Force(c.Version)
 }
 
@@ -96,8 +97,10 @@ func (c *cmdMigrateUp) Execute(args []string) error {
 	}
 
 	if c.Steps == 0 {
+		fmt.Println("Migrating up to highest available version")
 		return m.Up()
 	} else {
+		fmt.Println("Migrating up", c.Steps, "steps")
 		return m.Steps(c.Steps)
 	}
 }
@@ -114,8 +117,10 @@ func (c *cmdMigrateDown) Execute(args []string) error {
 	}
 
 	if c.Steps == 0 {
+		fmt.Println("Migrating down to lowest available version")
 		return m.Down()
 	} else {
+		fmt.Println("Migrating down", c.Steps, "steps")
 		return m.Steps(c.Steps)
 	}
 }
@@ -142,29 +147,38 @@ func (c *cmdMigrateWait) Execute(args []string) error {
 	}
 	defer db.Close()
 
+	lastV := -1
 	end := time.Now().Add(c.Timeout)
 	for {
-		v, err := getVersion(m)
+		nowV, err := getVersion(m)
 		if err != nil {
 			return err
 		}
-		if v >= c.Version {
+		if nowV != lastV {
+			fmt.Println("Database is at version", nowV, "desired:", c.Version)
+		}
+		if nowV >= c.Version {
 			return nil
 		}
 		if c.Timeout > 0 && time.Now().After(end) {
 			return errors.New(fmt.Sprintf("timeout waiting for version %d", c.Version))
 		}
+
+		lastV = nowV
 		time.Sleep(1 * time.Second)
 	}
 }
 
 func getVersion(m *migrate.Migrate) (int, error) {
-	vuint, _, err := m.Version()
+	vuint, isDirty, err := m.Version()
 	if errors.Is(err, migrate.ErrNilVersion) {
 		return -1, nil
 	}
 	if err != nil {
 		return -1, err
+	}
+	if isDirty {
+		fmt.Println("Warning: Database is dirty, manual intervention may be needed to force a version")
 	}
 	return int(vuint), nil
 }
