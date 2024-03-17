@@ -3,10 +3,10 @@ services:
     # supplies some tasks (sleep, die, maybe_die) for testing
     build:
       context: ../
-      dockerfile: tests/Dockerfile.dummyworker
+      dockerfile: tests/Dockerfile
     environment:
       - DATABASE_URL=postgres://igorreadwrite:readwrite@postgres:5432/igor?sslmode=disable&search_path=igor
-      - REDIS_URL=redis:6379
+      - QUEUE_URL=redis:6379
     depends_on:
       - postgres
       - redis
@@ -17,12 +17,13 @@ services:
     # serves Igor's API over HTTP (currently the only method, but more can be supported)
     build:
       context: ../
-      dockerfile: Dockerfile.apiserver
+      dockerfile: Dockerfile
+    command: ["api"]
     ports:
       - "8100:8100"
     environment:
       - DATABASE_URL=postgres://igorreadwrite:readwrite@postgres:5432/igor?sslmode=disable&search_path=igor
-      - REDIS_URL=redis:6379
+      - QUEUE_URL=redis:6379
       - ADDR=0.0.0.0:8100
       - DEBUG=true
     depends_on:
@@ -35,10 +36,11 @@ services:
     # performs the inner logic of Igor, running background tasks, queuing tasks and generally managing things
     build:
       context: ../
-      dockerfile: Dockerfile.worker
+      dockerfile: Dockerfile
+    command: ["worker"]
     environment:
       - DATABASE_URL=postgres://igorreadwrite:readwrite@postgres:5432/igor?sslmode=disable&search_path=igor
-      - REDIS_URL=redis:6379
+      - QUEUE_URL=redis:6379
       - DEBUG=true
     depends_on:
       - postgres

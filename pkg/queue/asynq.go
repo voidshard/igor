@@ -47,7 +47,7 @@ type Asynq struct {
 
 // NewAsynqQueue returns a new Asynq queue with the given settings
 func NewAsynqQueue(svc database.QueueDB, opts *Options) (*Asynq, error) {
-	opts.setDefaults()
+	opts.SetDefaults()
 	opts.URL = strings.Replace(opts.URL, "$"+opts.UsernameEnvVar, os.Getenv(opts.UsernameEnvVar), 1)
 	opts.URL = strings.Replace(opts.URL, "$"+opts.PasswordEnvVar, os.Getenv(opts.PasswordEnvVar), 1)
 	redisOpts := asynq.RedisClientOpt{

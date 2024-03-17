@@ -1,0 +1,11 @@
+DROP TRIGGER IF EXISTS Job_notify_event ON Job;
+DROP TRIGGER IF EXISTS Layer_notify_event ON Layer;
+DROP TRIGGER IF EXISTS Task_notify_event ON Task;
+DROP TRIGGER IF EXISTS Job_partition_trigger ON Job;
+DROP TRIGGER IF EXISTS Layer_partition_trigger ON Layer;
+DROP TRIGGER IF EXISTS Task_partition_trigger ON Task;
+DROP FUNCTION IF EXISTS notify_event();
+DROP FUNCTION IF EXISTS create_partition_and_insert();
+DROP TABLE IF EXISTS Job;
+DROP TABLE IF EXISTS Layer;
+DROP TABLE IF EXISTS Task;

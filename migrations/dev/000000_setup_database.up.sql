@@ -1,16 +1,17 @@
 -- Should be run as pg admin user (to set up schema & roles)
 
---- Setup database, schema and roles
+--- Setup database
 CREATE DATABASE igor;
 
-CREATE USER igorreadwrite WITH PASSWORD '${RW_PASS}'; 
+CREATE USER igorreadwrite WITH PASSWORD 'readwrite'; 
 GRANT CONNECT ON DATABASE igor TO igorreadwrite;
 GRANT ALL PRIVILEGES ON DATABASE igor TO igorreadwrite;
 
-CREATE USER igorreadonly WITH PASSWORD '${RO_PASS}';
+CREATE USER igorreadonly WITH PASSWORD 'readonly';
 GRANT CONNECT ON DATABASE igor TO igorreadonly;
 
-\c igor
+--- Setup schema and roles, implies we are in the igor database
+\connect igor
 CREATE SCHEMA IF NOT EXISTS igor;
 
 ALTER SCHEMA igor OWNER TO igorreadwrite;

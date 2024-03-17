@@ -18,7 +18,7 @@ const (
 
 func main() {
 	pgURL := os.Getenv("DATABASE_URL")
-	rdURL := os.Getenv("REDIS_URL")
+	rdURL := os.Getenv("QUEUE_URL")
 
 	svc, err := api.New(
 		&database.Options{URL: pgURL},

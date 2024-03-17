@@ -45,9 +45,9 @@ CREATE OR REPLACE FUNCTION create_partition_and_insert() RETURNS trigger AS $$
       partition = TG_TABLE_NAME || '_' || partition_date;
       IF NOT EXISTS(SELECT relname FROM pg_class WHERE relname=partition) THEN
         EXECUTE 'CREATE TABLE ' || partition || ' (check (to_timestamp(created_at)::date = ''' || to_timestamp(NEW.created_at)::date || ''')) INHERITS (' || TG_TABLE_NAME || ');';
-        IF (TG_TABLE_NAME = LOWER('${TABLE_LAYERS}')) THEN
+        IF (TG_TABLE_NAME = LOWER('Layer')) THEN
             EXECUTE 'CREATE TRIGGER ' || partition || '_notify_event AFTER INSERT OR UPDATE OR DELETE ON ' || partition || ' FOR EACH ROW EXECUTE PROCEDURE notify_event();';
-        ELSIF (TG_TABLE_NAME = LOWER('${TABLE_TASKS}')) THEN
+        ELSIF (TG_TABLE_NAME = LOWER('Task')) THEN
             EXECUTE 'CREATE TRIGGER ' || partition || '_notify_event AFTER INSERT OR UPDATE OR DELETE ON ' || partition || ' FOR EACH ROW EXECUTE PROCEDURE notify_event();';
         END IF;
         EXECUTE 'GRANT SELECT ON TABLE ' || partition || ' TO igorreadonly;';
@@ -58,7 +58,7 @@ CREATE OR REPLACE FUNCTION create_partition_and_insert() RETURNS trigger AS $$
     END;
 $$ LANGUAGE plpgsql VOLATILE COST 101;
 
-CREATE TABLE IF NOT EXISTS ${TABLE_JOBS} (
+CREATE TABLE IF NOT EXISTS Job (
 	    name VARCHAR(255),
 	    id VARCHAR(36) PRIMARY KEY,
 	    status VARCHAR(12) NOT NULL DEFAULT 'PENDING',
@@ -67,11 +67,11 @@ CREATE TABLE IF NOT EXISTS ${TABLE_JOBS} (
 	    updated_at BIGINT NOT NULL DEFAULT 0,
             UNIQUE (id, created_at)
 ) WITH (OIDS=FALSE);
-CREATE OR REPLACE TRIGGER ${TABLE_JOBS}_partition_trigger BEFORE INSERT ON ${TABLE_JOBS} FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();
+CREATE OR REPLACE TRIGGER Job_partition_trigger BEFORE INSERT ON Job FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();
 
 -- Layer table has no FK to Job as we can only ever create Layers in CreateJob API call, in which we create
 -- the Job and it's Layers in a transaction (and optionally Tasks too)
-CREATE TABLE IF NOT EXISTS ${TABLE_LAYERS} (
+CREATE TABLE IF NOT EXISTS Layer (
 	    name VARCHAR(255),
 	    paused_at BIGINT NOT NULL DEFAULT 0,
 	    priority INT NOT NULL DEFAULT 0,
@@ -83,10 +83,10 @@ CREATE TABLE IF NOT EXISTS ${TABLE_LAYERS} (
 	    updated_at BIGINT NOT NULL DEFAULT 0,
             UNIQUE (id, created_at)
 ) WITH (OIDS=FALSE);
-CREATE OR REPLACE TRIGGER ${TABLE_LAYERS}_notify_event AFTER INSERT OR UPDATE OR DELETE ON ${TABLE_LAYERS} FOR EACH ROW EXECUTE PROCEDURE notify_event();
-CREATE OR REPLACE TRIGGER ${TABLE_LAYERS}_partition_trigger BEFORE INSERT ON ${TABLE_LAYERS} FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();
+CREATE OR REPLACE TRIGGER Layer_notify_event AFTER INSERT OR UPDATE OR DELETE ON Layer FOR EACH ROW EXECUTE PROCEDURE notify_event();
+CREATE OR REPLACE TRIGGER Layer_partition_trigger BEFORE INSERT ON Layer FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();
 
-CREATE TABLE IF NOT EXISTS ${TABLE_TASKS} (
+CREATE TABLE IF NOT EXISTS Task (
 	    type VARCHAR(255) NOT NULL, 
             args BYTEA,
 	    name VARCHAR(255),
@@ -101,10 +101,8 @@ CREATE TABLE IF NOT EXISTS ${TABLE_TASKS} (
 	    message TEXT,
 	    created_at BIGINT NOT NULL DEFAULT 0,
 	    updated_at BIGINT NOT NULL DEFAULT 0,
-            CONSTRAINT fk_layer_id FOREIGN KEY (layer_id) REFERENCES ${TABLE_LAYERS}(id) ON DELETE CASCADE,
+            CONSTRAINT fk_layer_id FOREIGN KEY (layer_id) REFERENCES Layer(id) ON DELETE CASCADE,
             UNIQUE (id, created_at)
 ) WITH (OIDS=FALSE);
-CREATE OR REPLACE TRIGGER ${TABLE_TASKS}_notify_event AFTER INSERT OR UPDATE OR DELETE ON ${TABLE_TASKS} FOR EACH ROW EXECUTE PROCEDURE notify_event();
-CREATE OR REPLACE TRIGGER ${TABLE_TASKS}_partition_trigger BEFORE INSERT ON ${TABLE_TASKS} FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();
-
-GRANT SELECT ON ALL TABLES IN SCHEMA igor TO igorreadonly;
+CREATE OR REPLACE TRIGGER Task_notify_event AFTER INSERT OR UPDATE OR DELETE ON Task FOR EACH ROW EXECUTE PROCEDURE notify_event();
+CREATE OR REPLACE TRIGGER Task_partition_trigger BEFORE INSERT ON Task FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();

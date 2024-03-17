@@ -22,7 +22,7 @@ type Postgres struct {
 
 // NewPostgres returns a new Postgres database connection.
 func NewPostgres(opts *Options) (*Postgres, error) {
-	opts.setDefaults()
+	opts.SetDefaults()
 	opts.URL = strings.Replace(opts.URL, "$"+opts.UsernameEnvVar, os.Getenv(opts.UsernameEnvVar), 1)
 	opts.URL = strings.Replace(opts.URL, "$"+opts.PasswordEnvVar, os.Getenv(opts.PasswordEnvVar), 1)
 	pool, err := pgxpool.New(context.Background(), opts.URL)
@@ -199,12 +199,7 @@ func (p *Postgres) SetTaskQueueID(taskID, etag, newEtag, queueTaskID string, sta
 
 // Jobs returns jobs matching the given query
 func (p *Postgres) Jobs(q *structs.Query) ([]*structs.Job, error) {
-	where, args := toSqlQuery(map[string][]string{
-		"id":     q.JobIDs,
-		"status": statusToStrings(q.Statuses),
-	},
-		q.UpdatedBefore, q.UpdatedAfter, q.CreatedBefore, q.CreatedAfter,
-	)
+	where, args := toSqlQuery([]string{"id", "status"}, [][]string{q.JobIDs, statusToStrings(q.Statuses)}, q.UpdatedBefore, q.UpdatedAfter, q.CreatedBefore, q.CreatedAfter)
 	args = append(args, q.Limit, q.Offset)
 
 	// TODO: prepare statement
@@ -246,13 +241,7 @@ func (p *Postgres) Jobs(q *structs.Query) ([]*structs.Job, error) {
 
 // Layers returns layers matching the given query
 func (p *Postgres) Layers(q *structs.Query) ([]*structs.Layer, error) {
-	where, args := toSqlQuery(map[string][]string{
-		"job_id": q.JobIDs,
-		"id":     q.LayerIDs,
-		"status": statusToStrings(q.Statuses),
-	},
-		q.UpdatedBefore, q.UpdatedAfter, q.CreatedBefore, q.CreatedAfter,
-	)
+	where, args := toSqlQuery([]string{"job_id", "id", "status"}, [][]string{q.JobIDs, q.LayerIDs, statusToStrings(q.Statuses)}, q.UpdatedBefore, q.UpdatedAfter, q.CreatedBefore, q.CreatedAfter)
 	args = append(args, q.Limit, q.Offset)
 
 	qstr := fmt.Sprintf(`SELECT name, paused_at, priority, id, status, etag, job_id, created_at, updated_at FROM %s %s 
@@ -297,14 +286,7 @@ func (p *Postgres) Layers(q *structs.Query) ([]*structs.Layer, error) {
 
 // Tasks returns tasks matching the given query
 func (p *Postgres) Tasks(q *structs.Query) ([]*structs.Task, error) {
-	where, args := toSqlQuery(map[string][]string{
-		"job_id":   q.JobIDs,
-		"layer_id": q.LayerIDs,
-		"id":       q.TaskIDs,
-		"status":   statusToStrings(q.Statuses),
-	},
-		q.UpdatedBefore, q.UpdatedAfter, q.CreatedBefore, q.CreatedAfter,
-	)
+	where, args := toSqlQuery([]string{"job_id", "layer_id", "id", "status"}, [][]string{q.JobIDs, q.LayerIDs, q.TaskIDs, statusToStrings(q.Statuses)}, q.UpdatedBefore, q.UpdatedAfter, q.CreatedBefore, q.CreatedAfter)
 	args = append(args, q.Limit, q.Offset)
 
 	qstr := fmt.Sprintf(`SELECT type, args, name, paused_at, id, status, etag, job_id, layer_id, queue_task_id, message, created_at, updated_at FROM %s %s
@@ -408,13 +390,24 @@ func (p *Postgres) setPaused(table string, at int64, newTag string, ids []*struc
 }
 
 // toSqlQuery converts query data into a SQL query string & args
-func toSqlQuery(in map[string][]string, upB, upA, crB, crA int64) (string, []interface{}) {
-	if in == nil {
-		in = map[string][]string{}
+func toSqlQuery(keys []string, values [][]string, upB, upA, crB, crA int64) (string, []interface{}) {
+	// Accepting two lists for keys and values means our order of iteration is assured.
+	// ie. as opposed to using a simplier map[string][]string
+	if keys == nil {
+		keys = []string{}
+	}
+	if values == nil {
+		values = [][]string{}
+	}
+	if len(keys) != len(values) {
+		// This would imply our code is busted inside the postgres package
+		// Unit tests should catch this ..
+		return "", []interface{}{}
 	}
 	and := []string{}
 	args := []interface{}{}
-	for k, v := range in {
+	for index, k := range keys {
+		v := values[index]
 		if v == nil || len(v) == 0 {
 			continue
 		}

@@ -11,7 +11,8 @@ import (
 func TestToSqlQuery(t *testing.T) {
 	cases := []struct {
 		Name          string
-		In            map[string][]string
+		Keys          []string
+		Values        [][]string
 		ExpectQuery   string
 		ExpectArgs    []interface{}
 		UpdatedBefore int64
@@ -21,19 +22,22 @@ func TestToSqlQuery(t *testing.T) {
 	}{
 		{
 			Name:        "Nil",
-			In:          nil,
+			Keys:        nil,
+			Values:      nil,
 			ExpectQuery: "",
 			ExpectArgs:  []interface{}{},
 		},
 		{
 			Name:        "Empty",
-			In:          map[string][]string{},
+			Keys:        []string{},
+			Values:      [][]string{},
 			ExpectQuery: "",
 			ExpectArgs:  []interface{}{},
 		},
 		{
 			Name:          "TimeFilters",
-			In:            map[string][]string{},
+			Keys:          []string{},
+			Values:        [][]string{},
 			ExpectQuery:   "WHERE updated_at >= $1 AND updated_at <= $2 AND created_at >= $3 AND created_at <= $4",
 			ExpectArgs:    []interface{}{int64(100), int64(200), int64(300), int64(400)},
 			UpdatedBefore: 100,
@@ -42,37 +46,30 @@ func TestToSqlQuery(t *testing.T) {
 			CreatedAfter:  400,
 		},
 		{
-			Name: "OneField",
-			In: map[string][]string{
-				"field": []string{"a"},
-			},
+			Name:        "OneField",
+			Keys:        []string{"field"},
+			Values:      [][]string{{"a"}},
 			ExpectQuery: "WHERE field IN ($1)",
 			ExpectArgs:  []interface{}{"a"},
 		},
 		{
-			Name: "OneFieldMultipleArgs",
-			In: map[string][]string{
-				"field": []string{"a", "b", "c"},
-			},
+			Name:        "OneFieldMultipleArgs",
+			Keys:        []string{"field"},
+			Values:      [][]string{{"a", "b", "c"}},
 			ExpectQuery: "WHERE field IN ($1, $2, $3)",
 			ExpectArgs:  []interface{}{"a", "b", "c"},
 		},
 		{
-			Name: "MultipleFieldsMultipleArgs",
-			In: map[string][]string{
-				"field1": []string{"a", "b", "c"},
-				"field2": []string{"d", "e", "f"},
-			},
-			// TODO: we iterate a map; priority is not guaranteed
+			Name:        "MultipleFieldsMultipleArgs",
+			Keys:        []string{"field1", "field2"},
+			Values:      [][]string{{"a", "b", "c"}, {"d", "e", "f"}},
 			ExpectQuery: "WHERE field1 IN ($1, $2, $3) AND field2 IN ($4, $5, $6)",
 			ExpectArgs:  []interface{}{"a", "b", "c", "d", "e", "f"},
 		},
 		{
-			Name: "MultipleFieldsMultipleArgsWithTimeFilters",
-			In: map[string][]string{
-				"field1": []string{"a", "b", "c"},
-				"field2": []string{"d", "e", "f"},
-			},
+			Name:          "MultipleFieldsMultipleArgsWithTimeFilters",
+			Keys:          []string{"field1", "field2"},
+			Values:        [][]string{{"a", "b", "c"}, {"d", "e", "f"}},
 			ExpectQuery:   "WHERE field1 IN ($1, $2, $3) AND field2 IN ($4, $5, $6) AND updated_at >= $7 AND updated_at <= $8 AND created_at >= $9 AND created_at <= $10",
 			ExpectArgs:    []interface{}{"a", "b", "c", "d", "e", "f", int64(100), int64(200), int64(300), int64(400)},
 			UpdatedBefore: 100,
@@ -84,7 +81,7 @@ func TestToSqlQuery(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
-			qstr, args := toSqlQuery(c.In, c.UpdatedBefore, c.UpdatedAfter, c.CreatedBefore, c.CreatedAfter)
+			qstr, args := toSqlQuery(c.Keys, c.Values, c.UpdatedBefore, c.UpdatedAfter, c.CreatedBefore, c.CreatedAfter)
 
 			assert.Equal(t, c.ExpectQuery, qstr)
 			assert.Equal(t, c.ExpectArgs, args)
@@ -215,7 +212,7 @@ func TestToLayerSqlArgs(t *testing.T) {
 		LayerSpec: structs.LayerSpec{
 			Name:     "name",
 			PausedAt: 100,
-			Priority:    12,
+			Priority: 12,
 		},
 		ID:        "id",
 		Status:    structs.PENDING,

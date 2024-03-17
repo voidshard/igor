@@ -26,7 +26,7 @@ type Options struct {
 	TLSConfig *tls.Config
 }
 
-func (o *Options) setDefaults() {
+func (o *Options) SetDefaults() {
 	if o.PasswordEnvVar == "" {
 		o.PasswordEnvVar = defaultPasswordEnvVar
 	}

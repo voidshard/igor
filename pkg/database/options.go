@@ -21,7 +21,7 @@ type Options struct {
 	UsernameEnvVar string
 }
 
-func (o *Options) setDefaults() {
+func (o *Options) SetDefaults() {
 	if o.PasswordEnvVar == "" {
 		o.PasswordEnvVar = defaultPasswordEnvVar
 	}
