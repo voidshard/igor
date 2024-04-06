@@ -21,6 +21,9 @@ const (
 	asyncAggMaxSize  = 1000
 	asyncAggMaxDelay = 2 * time.Second
 	asyncAggRune     = "¬"
+
+	asyncEnvVarUser     = "ASYNQ_REDIS_USER"
+	asyncEnvVarPassword = "ASYNQ_REDIS_PASSWORD"
 )
 
 // Asynq is a Queue implementation that uses asynq.
@@ -47,13 +50,10 @@ type Asynq struct {
 
 // NewAsynqQueue returns a new Asynq queue with the given settings
 func NewAsynqQueue(svc database.QueueDB, opts *Options) (*Asynq, error) {
-	opts.SetDefaults()
-	opts.URL = strings.Replace(opts.URL, "$"+opts.UsernameEnvVar, os.Getenv(opts.UsernameEnvVar), 1)
-	opts.URL = strings.Replace(opts.URL, "$"+opts.PasswordEnvVar, os.Getenv(opts.PasswordEnvVar), 1)
 	redisOpts := asynq.RedisClientOpt{
 		Addr:      opts.URL,
-		Username:  os.Getenv(opts.UsernameEnvVar),
-		Password:  os.Getenv(opts.PasswordEnvVar),
+		Username:  os.Getenv(asyncEnvVarUser),
+		Password:  os.Getenv(asyncEnvVarPassword),
 		TLSConfig: opts.TLSConfig,
 	}
 	ins := asynq.NewInspector(redisOpts)

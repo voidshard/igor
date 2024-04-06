@@ -11,8 +11,8 @@ PGDATABASE=${PGDATABASE:-igor}
 # these test user/passwords are made in migrations/dev/
 OWNUSER=${OWNUSER:-postgres} # owner
 OWNPASS=${OWNPASS:-test}
-RWUSER=${RWUSER:-igorreadwrite} # readwrite
-RWPASS=${RWPASS:-readwrite}
+RWUSER=${RWUSER:-postgres} # readwrite
+RWPASS=${RWPASS:-test}
 
 REDISHOST=${REDISHOST:-localhost}
 REDISPORT=${REDISPORT:-6379}
@@ -42,17 +42,17 @@ done
 
 # apply db migrations
 # Create the DB
-# Nb. "migrate" refuses to acknowledge '\connect' to make & connect to the DB to make a schema .. so we have to do the first step manually
-PGHOST=$PGHOST PGPORT=$PGPORT PGUSER=$OWNUSER PGPASSWORD=$OWNPASS psql -f ${SCRIPT_DIR}/../migrations/dev/000000_setup_database.up.sql
+DATABASE_URL="postgres://${OWNUSER}:${OWNPASS}@${PGHOST}:${PGPORT}/igor?sslmode=disable"
+$IGOR migrate setup
 
 # Apply the migrations
-DATABASE_URL="postgres://${RWUSER}:${RWPASS}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=disable&search_path=igor" $IGOR migrate up --source file://${SCRIPT_DIR}/../migrations/prod
+$IGOR migrate up --source file://${SCRIPT_DIR}/../migrations/prod
 # Print the version
-DATABASE_URL="postgres://${RWUSER}:${RWPASS}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=disable&search_path=igor" $IGOR migrate version --source file://${SCRIPT_DIR}/../migrations/prod
+$IGOR migrate version --source file://${SCRIPT_DIR}/../migrations/prod
 
 # run the tests
 set +e 
-IGOR_TEST_API="http://localhost:${APIPORT}/api/v1" IGOR_TEST_DATA=${SCRIPT_DIR}/data IGOR_TEST_PG_URL="postgres://${RWUSER}:${RWPASS}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=disable&search_path=igor" IGOR_TEST_RD_URL="redis://${REDISHOST}:${REDISPORT}/${REDISDB}" go test -v ./...
+IGOR_TEST_API="http://localhost:${APIPORT}/api/v1" IGOR_TEST_DATA=${SCRIPT_DIR}/data IGOR_TEST_PG_URL=${DATABASE_URL} IGOR_TEST_RD_URL="redis://${REDISHOST}:${REDISPORT}/${REDISDB}" go test -v ./...
 
 # tear down & remove the test infra
 docker compose stop

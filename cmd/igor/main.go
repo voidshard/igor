@@ -7,14 +7,15 @@ import (
 )
 
 type optsDatabase struct {
-	DatabaseURL string `long:"database-url" env:"DATABASE_URL" description:"Database connection string" default:"postgres://$DATABASE_USER:$DATABASE_PASSWORD@localhost:5432/igor?sslmode=disable&search_path=igor"`
+	DatabaseURL string `long:"database-url" env:"DATABASE_URL" description:"Database connection string" default:"postgres://postgres:test@localhost:5432/igor?sslmode=disable"`
 }
 
 type optsQueue struct {
-	QueueURL       string `long:"queue-url" env:"QUEUE_URL" description:"Queue connection string" default:"redis://localhost:6379/0"`
 	QueueTLSCert   string `long:"queue-tls-cert" env:"QUEUE_TLS_CERT" description:"Queue TLS certificate"`
 	QueueTLSKey    string `long:"queue-tls-key" env:"QUEUE_TLS_KEY" description:"Queue TLS key"`
 	QueueTLSCaCert string `long:"queue-tls-ca-cert" env:"QUEUE_TLS_CA_CERT" description:"Queue TLS CA certificate"`
+
+	QueueURL string `long:"queue-url" env:"QUEUE_URL" default:"redis://localhost:6379/0" description:"Queue connection string. If your redis requires a username and password for Asynq you can set the following environment variables: ASYNQ_REDIS_USER, ASYNQ_REDIS_PASSWORD"`
 }
 
 type optsGeneral struct {

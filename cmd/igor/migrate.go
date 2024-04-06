@@ -3,7 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
-	"os"
+	"log"
+	"net/url"
 	"strings"
 	"time"
 
@@ -64,7 +65,14 @@ type cmdMigrateWait struct {
 	Timeout time.Duration `long:"timeout" env:"MIGRATIONS_WAIT_TIMEOUT" description:"Time to wait before erroring (optional)"`
 }
 
+type cmdMigrateSetup struct {
+	optsGeneral
+	optsDatabase
+}
+
 type optsMigrate struct {
+	Setup cmdMigrateSetup `command:"setup" hidden:"true" description:"Setup the database, should only be used in testing"`
+
 	Up cmdMigrateUp `command:"up" description:"Up version the database"`
 
 	Down cmdMigrateDown `command:"down" description:"Down version the database"`
@@ -72,6 +80,26 @@ type optsMigrate struct {
 	Version cmdMigrateVersion `command:"version" description:"Get or force-set the current version of the database"`
 
 	Wait cmdMigrateWait `command:"wait" description:"Wait (block) for the database to be at least the given version"`
+}
+
+func (c *cmdMigrateSetup) Execute(args []string) error {
+	// Used to setup the database for testing, not intended for use outside of testing
+	u, err := url.Parse(c.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	database := strings.Trim(u.Path, "/")
+	u.Path = ""
+
+	// connect to postgres without the DB
+	db, err := sql.Open("postgres", u.String())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %s;", database))
+	log.Println("Create database:", database, err)
+	return err
 }
 
 func (c *cmdMigrateForce) Execute(args []string) error {
@@ -184,10 +212,6 @@ func getVersion(m *migrate.Migrate) (int, error) {
 }
 
 func buildMigrate(source string, opts *database.Options) (*migrate.Migrate, *sql.DB, error) {
-	opts.SetDefaults()
-	opts.URL = strings.Replace(opts.URL, "$"+opts.UsernameEnvVar, os.Getenv(opts.UsernameEnvVar), 1)
-	opts.URL = strings.Replace(opts.URL, "$"+opts.PasswordEnvVar, os.Getenv(opts.PasswordEnvVar), 1)
-
 	db, err := sql.Open("postgres", opts.URL)
 	if err != nil {
 		return nil, nil, err

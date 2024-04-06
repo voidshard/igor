@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/signal"
+	"syscall"
 
 	"github.com/voidshard/igor/internal/utils"
 	"github.com/voidshard/igor/pkg/api"
@@ -43,7 +44,7 @@ func (c *optsWorker) Execute(args []string) error {
 	defer api.Close()
 
 	exit := make(chan os.Signal, 1)
-	signal.Notify(exit, os.Interrupt)
+	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
 	<-exit
 
 	return nil

@@ -3,7 +3,6 @@ package database
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -22,9 +21,6 @@ type Postgres struct {
 
 // NewPostgres returns a new Postgres database connection.
 func NewPostgres(opts *Options) (*Postgres, error) {
-	opts.SetDefaults()
-	opts.URL = strings.Replace(opts.URL, "$"+opts.UsernameEnvVar, os.Getenv(opts.UsernameEnvVar), 1)
-	opts.URL = strings.Replace(opts.URL, "$"+opts.PasswordEnvVar, os.Getenv(opts.PasswordEnvVar), 1)
 	pool, err := pgxpool.New(context.Background(), opts.URL)
 	return &Postgres{pool: pool, opts: opts}, err
 }

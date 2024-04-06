@@ -50,8 +50,6 @@ CREATE OR REPLACE FUNCTION create_partition_and_insert() RETURNS trigger AS $$
         ELSIF (TG_TABLE_NAME = LOWER('Task')) THEN
             EXECUTE 'CREATE TRIGGER ' || partition || '_notify_event AFTER INSERT OR UPDATE OR DELETE ON ' || partition || ' FOR EACH ROW EXECUTE PROCEDURE notify_event();';
         END IF;
-        EXECUTE 'GRANT SELECT ON TABLE ' || partition || ' TO igorreadonly;';
-        EXECUTE 'GRANT ALL ON TABLE ' || partition || ' TO igorreadwrite;';
       END IF;
       EXECUTE 'INSERT INTO ' || partition || ' SELECT(' || TG_TABLE_NAME || ' ' || quote_literal(NEW) || ').*;';
       RETURN NULL;
